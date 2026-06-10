@@ -11,7 +11,11 @@ import SwiftUI
 struct BrokeApp: App {
     var body: some Scene {
         WindowGroup {
+#if targetEnvironment(simulator)
+            SimulatorDemoView()
+#else
             ContentView()
+#endif
         }
     }
 }
