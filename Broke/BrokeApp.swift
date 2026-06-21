@@ -17,10 +17,6 @@ struct BrokeApp: App {
 
     var body: some Scene {
         WindowGroup {
-#if targetEnvironment(simulator)
-            SimulatorDemoView()
-                .environmentObject(designSettings)
-#else
             ContentView(
                 model: coordinator.model,
                 proximity: coordinator.proximity
@@ -29,7 +25,6 @@ struct BrokeApp: App {
             .onOpenURL { url in
                 coordinator.model.handleIncomingTagURL(url)
             }
-#endif
         }
     }
 }

@@ -184,7 +184,6 @@ struct ContentView: View {
 
     private var statusCard: some View {
         let locked = model.displayedIsLocked
-        let persona = FruitPersona.forStatus(isLocked: locked)
         let base = design.primaryFor(locked: locked)
         let accent = design.secondaryFor(locked: locked)
 
@@ -234,7 +233,7 @@ struct ContentView: View {
 
             Spacer(minLength: design.spacing(8))
 
-            FruitCharacter(fruit: persona.fruit, personality: persona.personality, size: design.hero(104))
+            AnimatedStrawberryMascot(size: design.hero(104))
         }
         .padding(design.spacing(18))
         .frame(maxWidth: .infinity, alignment: .leading)
