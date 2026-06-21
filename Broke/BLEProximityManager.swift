@@ -13,16 +13,27 @@ final class BLEProximityManager: NSObject, ObservableObject {
         CBUUID(string: "6F2A0003-8F4D-4B1A-9F1C-7D19D2A10001")
     nonisolated(unsafe) private static let podIDUUID =
         CBUUID(string: "6F2A0005-8F4D-4B1A-9F1C-7D19D2A10001")
+    nonisolated(unsafe) private static let heartbeatUUID =
+        CBUUID(string: "6F2A0006-8F4D-4B1A-9F1C-7D19D2A10001")
+    private static let restorationIdentifier =
+        "dev.kunjadia.broke.central"
+    private static let lockThresholdRSSI = -50
+    private static let unlockThresholdRSSI = -55
+    private static let calibrationSampleTarget = 20
 
     @Published private(set) var status: Status = .starting
     @Published private(set) var pods: [PodSnapshot] = []
     @Published private(set) var isNear = false
+    @Published private(set) var calibrationSession: CalibrationSession?
+    @Published private(set) var calibrationResult: CalibrationResult?
 
     private let defaults = UserDefaults.standard
     private var central: CBCentralManager!
     private var runtimes: [UUID: PodRuntime] = [:]
     private var pairedPods: [String: StoredPod] = [:]
     private var rssiTimer: Timer?
+    private var calibrationSamples: [Double] = []
+    private var calibrationHeldIsNear: Bool?
 
     private enum Key {
         static let pairedPods = "blePairedPods"
@@ -56,15 +67,35 @@ final class BLEProximityManager: NSObject, ObservableObject {
         let estimatedDistance: Double?
         let thresholdRSSI: Int
         let isNear: Bool
+        let boundaryRSSI: Double?
+        let hysteresisBuffer: Double?
 
         var id: String { podID }
         var displayName: String { room?.isEmpty == false ? room! : podID }
+    }
+
+    struct CalibrationSession {
+        let podID: String
+        let room: String
+        let targetSampleCount: Int
+        var sampleCount: Int
+        var currentRSSI: Double?
+    }
+
+    struct CalibrationResult {
+        let podID: String
+        let succeeded: Bool
+        let message: String
+        let averageRSSI: Double?
+        let bufferRSSI: Double?
     }
 
     private struct StoredPod: Codable {
         let podID: String
         var peripheralID: UUID
         var room: String
+        var boundaryRSSI: Double?
+        var hysteresisBuffer: Double?
     }
 
     private final class PodRuntime {
@@ -72,7 +103,7 @@ final class BLEProximityManager: NSObject, ObservableObject {
         var podID: String?
         var isConnected = false
         var calibrationRSSI = -59
-        var thresholdRSSI = -70
+        var thresholdRSSI = BLEProximityManager.lockThresholdRSSI
         var smoothedRSSI: Double?
         var estimatedDistance: Double?
         var isNear = false
@@ -87,7 +118,13 @@ final class BLEProximityManager: NSObject, ObservableObject {
     override init() {
         super.init()
         loadPairedPods()
-        central = CBCentralManager(delegate: self, queue: nil)
+        central = CBCentralManager(
+            delegate: self,
+            queue: nil,
+            options: [
+                CBCentralManagerOptionRestoreIdentifierKey: Self.restorationIdentifier
+            ]
+        )
     }
 
     var pairedPodCount: Int {
@@ -107,7 +144,9 @@ final class BLEProximityManager: NSObject, ObservableObject {
         pairedPods[podID] = StoredPod(
             podID: podID,
             peripheralID: runtime.peripheral.identifier,
-            room: room.trimmingCharacters(in: .whitespacesAndNewlines)
+            room: room.trimmingCharacters(in: .whitespacesAndNewlines),
+            boundaryRSSI: nil,
+            hysteresisBuffer: nil
         )
         savePairedPods()
         publishSnapshots()
@@ -124,8 +163,41 @@ final class BLEProximityManager: NSObject, ObservableObject {
         publishSnapshots()
     }
 
+    func startCalibration(for podID: String) {
+        guard let stored = pairedPods[podID] else { return }
+
+        calibrationSamples = []
+        calibrationResult = nil
+        calibrationHeldIsNear = isNear
+        calibrationSession = CalibrationSession(
+            podID: podID,
+            room: stored.room,
+            targetSampleCount: Self.calibrationSampleTarget,
+            sampleCount: 0,
+            currentRSSI: nil
+        )
+
+        for runtime in runtimes.values {
+            runtime.nearSamples = 0
+            runtime.farSamples = 0
+        }
+        publishSnapshots()
+    }
+
+    func cancelCalibration() {
+        calibrationSamples = []
+        calibrationSession = nil
+        calibrationHeldIsNear = nil
+        publishSnapshots()
+    }
+
+    func clearCalibrationResult() {
+        calibrationResult = nil
+    }
+
     private func startScanning() {
         guard central.state == .poweredOn else { return }
+        reconnectKnownPods()
         status = runtimes.values.contains(where: \.isConnected) ? .ready : .scanning
         central.scanForPeripherals(
             withServices: [Self.serviceUUID],
@@ -143,6 +215,21 @@ final class BLEProximityManager: NSObject, ObservableObject {
         }
     }
 
+    private func reconnectKnownPods() {
+        let identifiers = pairedPods.values.map(\.peripheralID)
+        guard !identifiers.isEmpty else { return }
+
+        central.registerForConnectionEvents(
+            options: [
+                .peripheralUUIDs: identifiers
+            ]
+        )
+
+        for peripheral in central.retrievePeripherals(withIdentifiers: identifiers) {
+            connectIfNeeded(peripheral)
+        }
+    }
+
     @objc private func pollConnectedPods() {
         for runtime in runtimes.values where runtime.isConnected {
             runtime.peripheral.readRSSI()
@@ -154,15 +241,28 @@ final class BLEProximityManager: NSObject, ObservableObject {
         runtimes[peripheral.identifier] = runtime
         peripheral.delegate = self
 
-        guard !runtime.isConnected, peripheral.state == .disconnected else { return }
-        central.connect(peripheral)
+        if peripheral.state == .connected {
+            runtime.isConnected = true
+            peripheral.discoverServices([Self.serviceUUID])
+            publishSnapshots()
+        } else if !runtime.isConnected, peripheral.state == .disconnected {
+            central.connect(
+                peripheral,
+                options: [
+                    CBConnectPeripheralOptionNotifyOnConnectionKey: true,
+                    CBConnectPeripheralOptionNotifyOnDisconnectionKey: true,
+                    CBConnectPeripheralOptionNotifyOnNotificationKey: true,
+                    CBConnectPeripheralOptionEnableAutoReconnect: true
+                ]
+            )
+        }
     }
 
     private func processRSSI(_ value: Int, for peripheralID: UUID) {
         guard value < 0, value > -120, let runtime = runtimes[peripheralID] else { return }
 
         let filtered = runtime.smoothedRSSI.map {
-            ($0 * 0.8) + (Double(value) * 0.2)
+            ($0 * 0.35) + (Double(value) * 0.65)
         } ?? Double(value)
         runtime.smoothedRSSI = filtered
         runtime.estimatedDistance = pow(
@@ -170,25 +270,45 @@ final class BLEProximityManager: NSObject, ObservableObject {
             (Double(runtime.calibrationRSSI) - filtered) / 22
         )
 
-        guard let podID = runtime.podID, pairedPods[podID] != nil else {
+        guard let podID = runtime.podID else {
             publishSnapshots()
             return
         }
 
+        if let calibrationSession {
+            if calibrationSession.podID == podID {
+                calibrationSamples.append(Double(value))
+                self.calibrationSession?.sampleCount = calibrationSamples.count
+                self.calibrationSession?.currentRSSI = Double(value)
+                if calibrationSamples.count >= Self.calibrationSampleTarget {
+                    finishCalibration()
+                } else {
+                    publishSnapshots()
+                }
+            }
+            return
+        }
+
+        guard pairedPods[podID] != nil else {
+            publishSnapshots()
+            return
+        }
+
+        let threshold = thresholds(for: podID)
         if !runtime.isNear {
-            runtime.nearSamples = filtered >= Double(runtime.thresholdRSSI)
+            runtime.nearSamples = filtered >= threshold.lock
                 ? runtime.nearSamples + 1
                 : 0
-            if runtime.nearSamples >= 3 {
+            if runtime.nearSamples >= 1 {
                 runtime.isNear = true
                 runtime.nearSamples = 0
                 runtime.farSamples = 0
             }
         } else {
-            runtime.farSamples = filtered <= Double(runtime.thresholdRSSI - 5)
+            runtime.farSamples = filtered <= threshold.unlock
                 ? runtime.farSamples + 1
                 : 0
-            if runtime.farSamples >= 5 {
+            if runtime.farSamples >= 1 {
                 runtime.isNear = false
                 runtime.nearSamples = 0
                 runtime.farSamples = 0
@@ -202,6 +322,7 @@ final class BLEProximityManager: NSObject, ObservableObject {
         pods = runtimes.values.compactMap { runtime in
             guard let podID = runtime.podID else { return nil }
             let stored = pairedPods[podID]
+            let threshold = thresholds(for: podID)
             return PodSnapshot(
                 podID: podID,
                 peripheralID: runtime.peripheral.identifier,
@@ -210,8 +331,10 @@ final class BLEProximityManager: NSObject, ObservableObject {
                 isConnected: runtime.isConnected,
                 smoothedRSSI: runtime.smoothedRSSI,
                 estimatedDistance: runtime.estimatedDistance,
-                thresholdRSSI: runtime.thresholdRSSI,
-                isNear: stored != nil && runtime.isNear
+                thresholdRSSI: Int(threshold.lock.rounded()),
+                isNear: stored != nil && runtime.isNear,
+                boundaryRSSI: stored?.boundaryRSSI,
+                hysteresisBuffer: stored?.hysteresisBuffer
             )
         }
         .sorted {
@@ -219,7 +342,11 @@ final class BLEProximityManager: NSObject, ObservableObject {
             return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
         }
 
-        isNear = pods.contains(where: { $0.isPaired && $0.isNear })
+        if let heldIsNear = calibrationHeldIsNear {
+            isNear = heldIsNear
+        } else {
+            isNear = pods.contains(where: { $0.isPaired && $0.isNear })
+        }
         status = runtimes.values.contains(where: \.isConnected) ? .ready : .scanning
     }
 
@@ -236,7 +363,9 @@ final class BLEProximityManager: NSObject, ObservableObject {
             pairedPods[podID] = StoredPod(
                 podID: podID,
                 peripheralID: peripheralID,
-                room: "My Pod"
+                room: "My Pod",
+                boundaryRSSI: nil,
+                hysteresisBuffer: nil
             )
             savePairedPods()
         }
@@ -255,9 +384,67 @@ final class BLEProximityManager: NSObject, ObservableObject {
             Int(Int32(littleEndian: $0.loadUnaligned(as: Int32.self)))
         }
     }
+
+    private func thresholds(for podID: String) -> (lock: Double, unlock: Double) {
+        guard
+            let stored = pairedPods[podID],
+            let boundary = stored.boundaryRSSI,
+            let buffer = stored.hysteresisBuffer
+        else {
+            return (Double(Self.lockThresholdRSSI), Double(Self.unlockThresholdRSSI))
+        }
+
+        return (boundary + buffer, boundary - buffer)
+    }
+
+    private func finishCalibration() {
+        guard let session = calibrationSession else { return }
+        calibrationSession = nil
+
+        let average = calibrationSamples.reduce(0, +) / Double(calibrationSamples.count)
+        let variance = calibrationSamples.reduce(0) { partialResult, sample in
+            partialResult + pow(sample - average, 2)
+        } / Double(calibrationSamples.count)
+        let standardDeviation = sqrt(variance)
+        let buffer = min(max(standardDeviation * 1.5, 3.0), 8.0)
+
+        if var stored = pairedPods[session.podID] {
+            stored.boundaryRSSI = average
+            stored.hysteresisBuffer = buffer
+            pairedPods[session.podID] = stored
+            savePairedPods()
+        }
+
+        calibrationResult = CalibrationResult(
+            podID: session.podID,
+            succeeded: true,
+            message: "Boundary saved. Broke locks above \(Int((average + buffer).rounded())) dBm and unlocks below \(Int((average - buffer).rounded())) dBm.",
+            averageRSSI: average,
+            bufferRSSI: buffer
+        )
+        calibrationSamples = []
+        calibrationHeldIsNear = nil
+        for runtime in runtimes.values {
+            runtime.nearSamples = 0
+            runtime.farSamples = 0
+        }
+        publishSnapshots()
+    }
 }
 
 extension BLEProximityManager: CBCentralManagerDelegate {
+    nonisolated func centralManager(
+        _ central: CBCentralManager,
+        willRestoreState dict: [String: Any]
+    ) {
+        let restored = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] ?? []
+        Task { @MainActor in
+            for peripheral in restored {
+                self.connectIfNeeded(peripheral)
+            }
+        }
+    }
+
     nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
         Task { @MainActor in
             if central.state == .poweredOn {
@@ -317,6 +504,38 @@ extension BLEProximityManager: CBCentralManagerDelegate {
             self.startScanning()
         }
     }
+
+    nonisolated func centralManager(
+        _ central: CBCentralManager,
+        didDisconnectPeripheral peripheral: CBPeripheral,
+        timestamp: CFAbsoluteTime,
+        isReconnecting: Bool,
+        error: Error?
+    ) {
+        Task { @MainActor in
+            if let runtime = self.runtimes[peripheral.identifier] {
+                runtime.isConnected = false
+                runtime.isNear = false
+                runtime.nearSamples = 0
+                runtime.farSamples = 0
+            }
+            self.publishSnapshots()
+
+            if !isReconnecting {
+                self.connectIfNeeded(peripheral)
+            }
+        }
+    }
+
+    nonisolated func centralManager(
+        _ central: CBCentralManager,
+        connectionEventDidOccur event: CBConnectionEvent,
+        for peripheral: CBPeripheral
+    ) {
+        Task { @MainActor in
+            self.connectIfNeeded(peripheral)
+        }
+    }
 }
 
 extension BLEProximityManager: CBPeripheralDelegate {
@@ -326,7 +545,12 @@ extension BLEProximityManager: CBPeripheralDelegate {
         else { return }
 
         peripheral.discoverCharacteristics(
-            [Self.calibrationUUID, Self.thresholdUUID, Self.podIDUUID],
+            [
+                Self.calibrationUUID,
+                Self.thresholdUUID,
+                Self.podIDUUID,
+                Self.heartbeatUUID
+            ],
             for: service
         )
     }
@@ -337,7 +561,12 @@ extension BLEProximityManager: CBPeripheralDelegate {
         error: Error?
     ) {
         guard error == nil else { return }
-        service.characteristics?.forEach(peripheral.readValue)
+        service.characteristics?.forEach { characteristic in
+            peripheral.readValue(for: characteristic)
+            if characteristic.uuid == Self.heartbeatUUID {
+                peripheral.setNotifyValue(true, for: characteristic)
+            }
+        }
         peripheral.readRSSI()
     }
 
@@ -364,13 +593,26 @@ extension BLEProximityManager: CBPeripheralDelegate {
                     runtime.calibrationRSSI = value
                 }
             case Self.thresholdUUID:
-                if let value = self.readInt(from: data) {
-                    runtime.thresholdRSSI = value
-                }
+                runtime.thresholdRSSI = Self.lockThresholdRSSI
+            case Self.heartbeatUUID:
+                peripheral.readRSSI()
             default:
                 break
             }
             self.publishSnapshots()
+        }
+    }
+
+    nonisolated func peripheral(
+        _ peripheral: CBPeripheral,
+        didUpdateNotificationStateFor characteristic: CBCharacteristic,
+        error: Error?
+    ) {
+        guard characteristic.uuid == Self.heartbeatUUID else { return }
+        if error != nil || !characteristic.isNotifying {
+            peripheral.setNotifyValue(true, for: characteristic)
+        } else {
+            peripheral.readRSSI()
         }
     }
 

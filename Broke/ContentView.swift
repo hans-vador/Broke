@@ -2,219 +2,450 @@ import FamilyControls
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var model = FocusLockModel()
-    @StateObject private var proximity = BLEProximityManager()
+    @ObservedObject var model: FocusLockModel
+    @ObservedObject var proximity: BLEProximityManager
+    @EnvironmentObject private var designSettings: DesignSettings
     @State private var isChoosingApps = false
     @State private var podRoomNames: [String: String] = [:]
+    @State private var calibrationPod: BLEProximityManager.PodSnapshot?
+    @State private var isNamingProfile = false
+    @State private var newProfileName = ""
+    @State private var isConfirmingEmergencyUnlock = false
+#if DEBUG
+    @State private var isShowingDesignPanel = false
+#endif
+
+    private var design: DesignTokens {
+        designSettings.tokens
+    }
 
     var body: some View {
         ZStack {
-            Color.canvas.ignoresSafeArea()
+            PlayfulBackdrop(tokens: design)
 
             ScrollView {
-                VStack(spacing: 0) {
+                VStack(spacing: design.spacing(0)) {
                     header
                     statusCard
-                        .padding(.top, 34)
+                        .padding(.top, design.spacing(28))
                     appSection
-                        .padding(.top, 38)
+                        .padding(.top, design.spacing(32))
                     proximitySection
-                        .padding(.top, 30)
+                        .padding(.top, design.spacing(28))
                     actionSection
-                        .padding(.top, 30)
+                        .padding(.top, design.spacing(28))
                     footer
-                        .padding(.top, 34)
+                        .padding(.top, design.spacing(30))
                 }
-                .padding(.horizontal, 22)
-                .padding(.bottom, 28)
+                .padding(.horizontal, design.spacing(22))
+                .padding(.bottom, design.spacing(28))
             }
+
+            if let banner = model.lockBanner {
+                VStack {
+                    LockStateBanner(banner: banner)
+                        .padding(.horizontal, design.spacing(18))
+                        .padding(.top, design.spacing(10))
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    Spacer()
+                }
+                .zIndex(10)
+            }
+
+#if DEBUG
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    Button {
+                        isShowingDesignPanel = true
+                    } label: {
+                        Image(systemName: "paintpalette.fill")
+                            .font(.system(size: design.type(17), weight: .black))
+                            .foregroundStyle(design.secondary)
+                            .frame(width: 52, height: 52)
+                            .background(design.primary, in: Circle())
+                            .shadow(
+                                color: design.text.opacity(0.14),
+                                radius: design.shadow(20),
+                                y: design.shadow(10)
+                            )
+                    }
+                    .buttonStyle(PressButtonStyle())
+                    .accessibilityLabel("Open design controls")
+                }
+                .padding(.horizontal, design.spacing(22))
+                .padding(.bottom, design.spacing(22))
+            }
+            .zIndex(20)
+#endif
         }
+        .environment(\.designTokens, design)
         .preferredColorScheme(.light)
         .familyActivityPicker(
             isPresented: $isChoosingApps,
             selection: $model.selection
         )
+        .alert("New block list", isPresented: $isNamingProfile) {
+            TextField("Name, e.g. Deep Work", text: $newProfileName)
+            Button("Cancel", role: .cancel) {
+                newProfileName = ""
+            }
+            Button("Create") {
+                model.addBlockProfile(named: newProfileName)
+                newProfileName = ""
+                isChoosingApps = true
+            }
+        } message: {
+            Text("Create another set of apps you can switch to instantly.")
+        }
+        .confirmationDialog(
+            "Use an emergency unlock?",
+            isPresented: $isConfirmingEmergencyUnlock,
+            titleVisibility: .visible
+        ) {
+            Button("Use 1 emergency unlock", role: .destructive) {
+                model.useEmergencyUnlock()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("You only get 3 emergency unlocks. They do not come back unless Broke is deleted and reinstalled.")
+        }
         .sheet(item: $model.popup) { popup in
             StatusPopup(popup: popup) {
                 model.popup = nil
+                if case .screenTimeRequired = popup {
+                    model.requestAuthorization()
+                }
             }
             .presentationDetents([.height(390)])
             .presentationDragIndicator(.hidden)
             .presentationCornerRadius(34)
         }
+        .sheet(item: $calibrationPod) { pod in
+            BoundaryCalibrationSheet(
+                pod: pod,
+                proximity: proximity,
+                dismiss: { calibrationPod = nil }
+            )
+            .presentationDetents([.height(520)])
+            .presentationDragIndicator(.hidden)
+            .presentationCornerRadius(34)
+        }
+#if DEBUG
+        .sheet(isPresented: $isShowingDesignPanel) {
+            DesignDebugPanel(settings: designSettings)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(30)
+        }
+#endif
         .task {
             await model.requestAuthorizationIfNeeded()
-        }
-        .onChange(of: proximity.isNear) { _, isNear in
-            model.updateBLEProximity(isNear: isNear)
         }
     }
 
     private var header: some View {
         HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("BROKE")
-                    .font(.system(size: 13, weight: .black, design: .rounded))
-                    .tracking(3.2)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(greeting)
+                    .font(.system(size: design.type(24), weight: .black, design: .rounded))
+                    .foregroundStyle(design.text)
                 Text("Less scroll. More life.")
-                    .font(.system(size: 15, weight: .medium, design: .rounded))
-                    .foregroundStyle(Color.ink.opacity(0.48))
+                    .font(.system(size: design.type(15), weight: .semibold, design: .rounded))
+                    .foregroundStyle(design.text.opacity(0.48))
             }
 
             Spacer()
 
-            Circle()
-                .fill(model.isLocked ? Color.signal : Color.ink)
-                .frame(width: 38, height: 38)
-                .overlay {
-                    Image(systemName: model.isLocked ? "lock.fill" : "circle.dotted")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white)
-                }
+            HStack(spacing: design.spacing(6)) {
+                Circle()
+                    .fill(model.displayedIsLocked ? design.signal : design.primary)
+                    .frame(width: 8, height: 8)
+                Text(model.displayedIsLocked ? "Locked" : "Open")
+                    .font(.system(size: design.type(12), weight: .black, design: .rounded))
+                    .foregroundStyle(design.text.opacity(0.72))
+            }
+            .padding(.horizontal, design.spacing(12))
+            .frame(height: design.spacing(36))
+            .background(design.muted, in: RoundedRectangle(cornerRadius: design.radius(6)))
         }
-        .padding(.top, 18)
+        .padding(.top, design.spacing(16))
+    }
+
+    private var greeting: String {
+        let hour = Calendar.current.component(.hour, from: Date())
+        switch hour {
+        case 5..<12: return "Good morning"
+        case 12..<17: return "Good afternoon"
+        default: return "Good evening"
+        }
     }
 
     private var statusCard: some View {
-        VStack(spacing: 24) {
-            ZStack {
-                Circle()
-                    .stroke(Color.ink.opacity(0.08), lineWidth: 1)
-                    .frame(width: 174, height: 174)
+        let locked = model.displayedIsLocked
+        let persona = FruitPersona.forStatus(isLocked: locked)
+        let base = design.primaryFor(locked: locked)
+        let accent = design.secondaryFor(locked: locked)
 
-                Circle()
-                    .fill(model.isLocked ? Color.signal : Color.ink)
-                    .frame(width: 142, height: 142)
-                    .shadow(
-                        color: (model.isLocked ? Color.signal : Color.ink).opacity(0.18),
-                        radius: 22,
-                        y: 12
-                    )
+        return HStack(alignment: .center, spacing: design.spacing(16)) {
+            VStack(alignment: .leading, spacing: design.spacing(6)) {
+                Text(locked ? "Focus is on" : "Ready to focus")
+                    .font(.system(size: design.type(12), weight: .black, design: .rounded))
+                    .foregroundStyle(accent.opacity(locked ? 0.85 : 0.72))
 
-                Image(systemName: model.isLocked ? "lock.fill" : "lock.open.fill")
-                    .font(.system(size: 42, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .contentTransition(.symbolEffect(.replace))
-            }
-
-            VStack(spacing: 8) {
-                Text(model.isLocked ? "FOCUS IS ON" : "READY TO FOCUS")
-                    .font(.system(size: 12, weight: .black, design: .rounded))
-                    .tracking(2.4)
-                    .foregroundStyle(model.isLocked ? Color.signal : Color.ink.opacity(0.55))
-
-                Text(model.isLocked
+                Text(model.displayedIsLocked
                      ? "The noise is blocked."
                      : FocusLockModel.isNFCTestBypassEnabled
                         ? "Ready for a test run."
                         : "Tap your tag to begin.")
-                    .font(.system(size: 25, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color.ink)
+                    .font(.system(size: design.type(22), weight: .black, design: .rounded))
+                    .foregroundStyle(model.displayedIsLocked ? design.surface : design.text)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Text(FocusLockModel.isNFCTestBypassEnabled
-                     ? "Use the button below to test locking and unlocking."
-                     : model.isLocked
-                        ? "Scan the same NFC tag to unlock your apps."
-                        : "One scan locks your chosen apps. The next brings them back.")
-                    .font(.system(size: 15, weight: .medium, design: .rounded))
-                    .foregroundStyle(Color.ink.opacity(0.5))
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(3)
-                    .frame(maxWidth: 310)
+                     ? "Use the button below to test."
+                     : model.displayedIsLocked
+                        ? "Scan your tag to unlock."
+                        : "One scan locks. Next scan unlocks.")
+                    .font(.system(size: design.type(12), weight: .semibold, design: .rounded))
+                    .foregroundStyle(
+                        model.displayedIsLocked
+                            ? design.surface.opacity(0.72)
+                            : design.text.opacity(0.58)
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if locked {
+                    HStack(spacing: design.spacing(6)) {
+                        Image(systemName: "timer")
+                            .font(.system(size: design.type(11), weight: .black))
+                        Text(model.lockDurationText)
+                            .font(.system(size: design.type(13), weight: .black, design: .monospaced))
+                    }
+                    .foregroundStyle(base)
+                    .padding(.horizontal, design.spacing(10))
+                    .padding(.vertical, design.spacing(5))
+                    .background(accent, in: RoundedRectangle(cornerRadius: design.radius(4)))
+                    .padding(.top, design.spacing(2))
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                }
             }
+
+            Spacer(minLength: design.spacing(8))
+
+            FruitCharacter(fruit: persona.fruit, personality: persona.personality, size: design.hero(104))
         }
-        .frame(maxWidth: .infinity)
+        .padding(design.spacing(18))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(base, in: RoundedRectangle(cornerRadius: design.radius(14)))
+        .animation(.spring(response: 0.4, dampingFraction: 0.78), value: locked)
     }
 
     private var appSection: some View {
-        VStack(alignment: .leading, spacing: 13) {
+        VStack(alignment: .leading, spacing: design.spacing(14)) {
             HStack {
-                Text("BLOCK LIST")
-                    .sectionLabel()
+                Text("Block lists")
+                    .sectionLabel(tokens: design)
                 Spacer()
-                Text("\(model.selectedItemCount) selected")
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color.ink.opacity(0.38))
+                Text("\(model.blockProfiles.count) lists")
+                    .font(.system(size: design.type(12), weight: .bold, design: .rounded))
+                    .foregroundStyle(design.text.opacity(0.38))
             }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: design.spacing(14)) {
+                    ForEach(Array(model.blockProfiles.enumerated()), id: \.element.id) { index, profile in
+                        blockProfileIsland(profile, index: index)
+                    }
+
+                    Button {
+                        isNamingProfile = true
+                    } label: {
+                        VStack(spacing: design.spacing(8)) {
+                            Image(systemName: "plus")
+                                .font(.system(size: design.type(20), weight: .bold))
+                            Text("New list")
+                                .font(.system(size: design.type(11), weight: .black, design: .rounded))
+                        }
+                        .foregroundStyle(design.text.opacity(0.45))
+                        .frame(width: design.hero(116), height: design.hero(164))
+                        .background(design.muted, in: RoundedRectangle(cornerRadius: design.radius(12)))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: design.radius(12))
+                                .stroke(
+                                    design.text.opacity(0.12),
+                                    style: StrokeStyle(lineWidth: 1.5, dash: [5])
+                                )
+                        }
+                    }
+                    .buttonStyle(PressButtonStyle())
+                }
+            }
+            .contentMargins(.horizontal, 1, for: .scrollContent)
 
             Button {
                 isChoosingApps = true
             } label: {
-                HStack(spacing: 15) {
-                    RoundedRectangle(cornerRadius: 14)
-                        .fill(Color.ink)
-                        .frame(width: 48, height: 48)
-                        .overlay {
-                            Image(systemName: "square.grid.2x2.fill")
-                                .font(.system(size: 17, weight: .bold))
-                                .foregroundStyle(.white)
-                        }
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(model.hasSelection ? "Edit blocked apps" : "Choose apps")
-                            .font(.system(size: 16, weight: .bold, design: .rounded))
-                            .foregroundStyle(Color.ink)
-                        Text(model.hasSelection
-                             ? "Apps and categories are ready"
-                             : "Pick the apps that steal your time")
-                            .font(.system(size: 13, weight: .medium, design: .rounded))
-                            .foregroundStyle(Color.ink.opacity(0.45))
-                    }
-
+                HStack {
+                    Image(systemName: "slider.horizontal.3")
+                    Text(model.hasSelection ? "Edit active list" : "Choose apps for this list")
                     Spacer()
+                    Text("\(model.selectedItemCount) selected")
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(Color.ink.opacity(0.35))
                 }
-                .padding(14)
-                .background(.white.opacity(0.68), in: RoundedRectangle(cornerRadius: 20))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 20)
-                        .stroke(Color.ink.opacity(0.08), lineWidth: 1)
-                }
+                .font(.system(size: design.type(12), weight: .black, design: .rounded))
+                .foregroundStyle(design.text.opacity(0.68))
+                .padding(.horizontal, design.spacing(16))
+                .frame(height: design.spacing(48))
+                .background(design.muted, in: RoundedRectangle(cornerRadius: design.radius(8)))
             }
             .buttonStyle(.plain)
+
+            if !model.hasScreenTimeAuthorization {
+                Button {
+                    model.requestAuthorization()
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "hourglass.badge.exclamationmark")
+                        Text("Enable Screen Time access")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                    }
+                    .font(.system(size: design.type(12), weight: .black, design: .rounded))
+                    .foregroundStyle(design.secondary)
+                    .padding(.horizontal, design.spacing(16))
+                    .frame(height: design.spacing(48))
+                    .background(design.accentBlue.opacity(0.55), in: RoundedRectangle(cornerRadius: design.radius(8)))
+                }
+                .buttonStyle(.plain)
+            }
+
+            Label(
+                model.authorizationMessage,
+                systemImage: model.hasScreenTimeAuthorization
+                    ? "checkmark.shield.fill"
+                    : "exclamationmark.shield.fill"
+            )
+            .font(.system(size: 12, weight: .bold, design: .rounded))
+            .foregroundStyle(
+                model.hasScreenTimeAuthorization
+                    ? design.secondary
+                    : design.signal
+            )
         }
     }
 
+    private func blockProfileIsland(_ profile: BlockProfile, index: Int) -> some View {
+        let isActive = profile.id == model.activeProfileID
+        let ink = isActive ? design.surface : design.text
+        let persona = FruitPersona.forBlockList(index)
+
+        return Button {
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
+                model.selectBlockProfile(profile.id)
+            }
+        } label: {
+            VStack(spacing: design.spacing(10)) {
+                FruitCharacter(fruit: persona.fruit, personality: persona.personality, size: design.hero(66))
+
+                VStack(spacing: design.spacing(3)) {
+                    Text(profile.name)
+                        .font(.system(size: design.type(14), weight: .black, design: .rounded))
+                        .lineLimit(1)
+
+                    Text("\(profile.itemCount) apps")
+                        .font(.system(size: design.type(11), weight: .bold, design: .monospaced))
+                        .foregroundStyle(ink.opacity(0.6))
+
+                    Text(profileStatus(isActive: isActive, count: profile.itemCount))
+                        .font(.system(size: design.type(10), weight: .black, design: .rounded))
+                        .foregroundStyle(isActive ? design.primary : design.text.opacity(0.5))
+                        .padding(.top, design.spacing(2))
+                }
+                .multilineTextAlignment(.center)
+            }
+            .foregroundStyle(ink)
+            .padding(.vertical, design.spacing(16))
+            .padding(.horizontal, design.spacing(12))
+            .frame(width: design.hero(136), height: design.hero(164))
+            .background(
+                isActive ? design.secondary : design.muted,
+                in: RoundedRectangle(cornerRadius: design.radius(12))
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: design.radius(12))
+                    .stroke(isActive ? design.primary.opacity(0.5) : design.text.opacity(0.06), lineWidth: isActive ? 2 : 1)
+            }
+        }
+        .buttonStyle(PressButtonStyle())
+        .contextMenu {
+            if model.blockProfiles.count > 1 {
+                Button("Delete list", role: .destructive) {
+                    model.deleteBlockProfile(profile.id)
+                }
+            }
+        }
+    }
+
+    private func profileStatus(isActive: Bool, count: Int) -> String {
+        guard count > 0 else { return isActive ? "Add apps" : "Empty" }
+        guard isActive else { return "Tap to use" }
+        return model.displayedIsLocked ? "Blocking now" : "Active"
+    }
+
     private var actionSection: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: design.spacing(12)) {
             Button {
                 model.scanTag()
             } label: {
                 Label(
                     FocusLockModel.isNFCTestBypassEnabled
-                        ? model.isLocked ? "TEST UNLOCK" : "TEST LOCK"
-                        : model.isLocked ? "SCAN TO UNLOCK" : "SCAN TO LOCK",
+                        ? model.displayedIsLocked ? "Test unlock" : "Test lock"
+                        : model.displayedIsLocked ? "Scan to unlock" : "Scan to lock",
                     systemImage: FocusLockModel.isNFCTestBypassEnabled
                         ? "hand.tap.fill"
                         : "wave.3.right"
                 )
-                .font(.system(size: 15, weight: .black, design: .rounded))
-                .tracking(1.2)
                 .frame(maxWidth: .infinity)
-                .frame(height: 58)
-                .foregroundStyle(.white)
-                .background(
-                    model.canScan ? Color.ink : Color.ink.opacity(0.25),
-                    in: RoundedRectangle(cornerRadius: 18)
-                )
             }
-            .buttonStyle(PressButtonStyle())
+            .buttonStyle(PrimaryCTAStyle(tokens: design, isEnabled: model.canScan))
             .disabled(!model.canScan)
+
+            if model.isLocked {
+                Button {
+                    isConfirmingEmergencyUnlock = true
+                } label: {
+                    HStack(spacing: 9) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                        Text("Emergency unlock")
+                        Spacer()
+                        Text("\(model.emergencyUnlocksRemaining) left")
+                    }
+                    .font(.system(size: design.type(12), weight: .black, design: .rounded))
+                    .foregroundStyle(model.canUseEmergencyUnlock ? design.signal : design.text.opacity(0.32))
+                    .padding(.horizontal, design.spacing(16))
+                    .frame(height: design.spacing(48))
+                    .background(
+                        model.canUseEmergencyUnlock ? design.accentPink.opacity(0.35) : design.muted,
+                        in: RoundedRectangle(cornerRadius: design.radius(8))
+                    )
+                }
+                .buttonStyle(PressButtonStyle())
+                .disabled(!model.canUseEmergencyUnlock)
+            }
 
             if !FocusLockModel.isNFCTestBypassEnabled {
                 Button {
-                    model.writeTag()
+                    model.pairTag()
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "plus.circle.fill")
-                        Text(model.hasPairedTag ? "REPLACE NFC TAG" : "SET UP NFC TAG")
+                        Text(model.hasPairedTag ? "Pair a different tag" : "Pair NFC tag")
                     }
-                    .font(.system(size: 12, weight: .black, design: .rounded))
-                    .tracking(1.1)
-                    .foregroundStyle(Color.ink.opacity(0.58))
-                    .frame(height: 42)
+                    .font(.system(size: design.type(13), weight: .black, design: .rounded))
+                    .foregroundStyle(design.text.opacity(0.58))
+                    .frame(height: design.spacing(42))
                 }
                 .buttonStyle(.plain)
                 .disabled(!model.hasSelection)
@@ -223,40 +454,48 @@ struct ContentView: View {
     }
 
     private var proximitySection: some View {
-        VStack(alignment: .leading, spacing: 13) {
+        VStack(alignment: .leading, spacing: design.spacing(14)) {
             HStack {
-                Text("BLE PODS")
-                    .sectionLabel()
+                Text("BLE pods")
+                    .sectionLabel(tokens: design)
                 Spacer()
                 Text("\(proximity.pairedPodCount) paired")
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color.ink.opacity(0.38))
+                    .font(.system(size: design.type(12), weight: .bold, design: .rounded))
+                    .foregroundStyle(design.text.opacity(0.38))
             }
 
-            VStack(spacing: 14) {
+            VStack(spacing: design.spacing(14)) {
                 if proximity.pairedPodSnapshots.isEmpty {
-                    Text("No rooms paired yet. Power on a Broke pod nearby.")
-                        .font(.system(size: 13, weight: .medium, design: .rounded))
-                        .foregroundStyle(Color.ink.opacity(0.45))
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(spacing: design.spacing(14)) {
+                        FruitCharacter(fruit: .peach, personality: .sleepy, size: design.hero(60))
+
+                        Text("No pods paired yet.\nPower one on nearby.")
+                            .font(.system(size: design.type(12), weight: .semibold, design: .rounded))
+                            .foregroundStyle(design.text.opacity(0.55))
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Spacer(minLength: 0)
+                    }
+                    .padding(design.spacing(14))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(design.accentBlue.opacity(0.25), in: RoundedRectangle(cornerRadius: design.radius(10)))
                 }
 
                 ForEach(proximity.pairedPodSnapshots) { pod in
                     pairedPodRow(pod)
                     if pod.id != proximity.pairedPodSnapshots.last?.id {
-                        Divider().opacity(0.45)
+                        Divider().opacity(0.35)
                     }
                 }
 
                 ForEach(proximity.discoveredUnpairedPods) { pod in
-                    Divider().opacity(0.45)
+                    Divider().opacity(0.35)
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("NEW POD · \(pod.podID)")
-                            .font(.system(size: 11, weight: .black, design: .rounded))
-                            .tracking(1)
-                            .foregroundStyle(Color.ink.opacity(0.42))
+                        Text("New pod · \(pod.podID)")
+                            .font(.system(size: design.type(11), weight: .black, design: .rounded))
+                            .foregroundStyle(design.text.opacity(0.42))
 
-                        HStack(spacing: 10) {
+                        HStack(spacing: design.spacing(10)) {
                             TextField(
                                 "Room name",
                                 text: Binding(
@@ -265,58 +504,53 @@ struct ContentView: View {
                                 )
                             )
                             .textFieldStyle(.plain)
-                            .font(.system(size: 14, weight: .semibold, design: .rounded))
-                            .padding(.horizontal, 12)
-                            .frame(height: 42)
-                            .background(Color.ink.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                            .font(.system(size: design.type(14), weight: .semibold, design: .rounded))
+                            .padding(.horizontal, design.spacing(12))
+                            .frame(height: design.spacing(42))
+                            .background(design.surface.opacity(0.72), in: RoundedRectangle(cornerRadius: design.radius(6)))
 
-                            Button("PAIR") {
+                            Button("Pair") {
                                 let room = podRoomNames[pod.podID, default: ""]
                                 proximity.pairPod(pod.podID, room: room)
                             }
-                            .font(.system(size: 11, weight: .black, design: .rounded))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 16)
-                            .frame(height: 42)
-                            .background(Color.ink, in: RoundedRectangle(cornerRadius: 12))
+                            .font(.system(size: design.type(12), weight: .black, design: .rounded))
+                            .foregroundStyle(design.secondary)
+                            .padding(.horizontal, design.spacing(16))
+                            .frame(height: design.spacing(42))
+                            .background(design.primary, in: RoundedRectangle(cornerRadius: design.radius(6)))
                         }
                     }
                 }
             }
-            .padding(14)
-            .background(.white.opacity(0.68), in: RoundedRectangle(cornerRadius: 20))
-            .overlay {
-                RoundedRectangle(cornerRadius: 20)
-                    .stroke(Color.ink.opacity(0.08), lineWidth: 1)
-            }
+            .playfulPanel(tokens: design)
 
             Text(proximity.isNear
                  ? "A paired room is in range. Signals are evaluated separately."
                  : proximity.status.label)
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundStyle(Color.ink.opacity(0.34))
+                .font(.system(size: design.type(11), weight: .semibold, design: .rounded))
+                .foregroundStyle(design.text.opacity(0.34))
                 .padding(.horizontal, 2)
         }
     }
 
     private func pairedPodRow(_ pod: BLEProximityManager.PodSnapshot) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: design.spacing(12)) {
             Circle()
-                .fill(pod.isNear ? Color.signal : Color.ink.opacity(0.12))
-                .frame(width: 38, height: 38)
+                .fill(pod.isNear ? design.primary : design.muted)
+                .frame(width: design.hero(40), height: design.hero(40))
                 .overlay {
                     Image(systemName: "dot.radiowaves.left.and.right")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(pod.isNear ? .white : Color.ink.opacity(0.6))
+                        .font(.system(size: design.type(13), weight: .bold))
+                        .foregroundStyle(pod.isNear ? design.secondary : design.text.opacity(0.55))
                 }
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(pod.displayName)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color.ink)
+                    .font(.system(size: design.type(15), weight: .bold, design: .rounded))
+                    .foregroundStyle(design.text)
                 Text(podStatus(pod))
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(Color.ink.opacity(0.45))
+                    .font(.system(size: design.type(12), weight: .semibold, design: .rounded))
+                    .foregroundStyle(design.text.opacity(0.45))
             }
 
             Spacer()
@@ -324,14 +558,22 @@ struct ContentView: View {
             VStack(alignment: .trailing, spacing: 4) {
                 if let rssi = pod.smoothedRSSI {
                     Text("\(Int(rssi.rounded())) dBm")
-                        .font(.system(size: 12, weight: .black, design: .monospaced))
-                        .foregroundStyle(pod.isNear ? Color.signal : Color.ink.opacity(0.5))
+                        .font(.system(size: design.type(12), weight: .black, design: .monospaced))
+                        .foregroundStyle(pod.isNear ? design.secondary : design.text.opacity(0.5))
                 }
-                Button("FORGET") {
-                    proximity.forgetPod(pod.podID)
+                HStack(spacing: design.spacing(10)) {
+                    Button(pod.boundaryRSSI == nil ? "Calibrate" : "Recalibrate") {
+                        proximity.clearCalibrationResult()
+                        calibrationPod = pod
+                    }
+                    .foregroundStyle(design.text.opacity(0.58))
+
+                    Button("Forget") {
+                        proximity.forgetPod(pod.podID)
+                    }
+                    .foregroundStyle(design.signal)
                 }
-                .font(.system(size: 9, weight: .black, design: .rounded))
-                .foregroundStyle(Color.signal)
+                .font(.system(size: design.type(10), weight: .black, design: .rounded))
             }
         }
     }
@@ -342,6 +584,9 @@ struct ContentView: View {
         }
         if !pod.isConnected {
             return "Disconnected"
+        }
+        if let boundary = pod.boundaryRSSI, let buffer = pod.hysteresisBuffer {
+            return "Edge \(Int(boundary.rounded())) dBm · buffer \(Int(buffer.rounded()))"
         }
         if let distance = pod.estimatedDistance {
             return String(format: "Approx. %.1f m away", distance)
@@ -354,15 +599,174 @@ struct ContentView: View {
             Image(systemName: "iphone.radiowaves.left.and.right")
             Text(model.footerMessage)
         }
-        .font(.system(size: 12, weight: .semibold, design: .rounded))
-        .foregroundStyle(Color.ink.opacity(0.36))
+        .font(.system(size: design.type(12), weight: .semibold, design: .rounded))
+        .foregroundStyle(design.text.opacity(0.36))
         .multilineTextAlignment(.center)
+    }
+}
+
+private struct BoundaryCalibrationSheet: View {
+    let pod: BLEProximityManager.PodSnapshot
+    @ObservedObject var proximity: BLEProximityManager
+    let dismiss: () -> Void
+    @Environment(\.designTokens) private var design
+
+    private var session: BLEProximityManager.CalibrationSession? {
+        guard proximity.calibrationSession?.podID == pod.podID else { return nil }
+        return proximity.calibrationSession
+    }
+
+    private var result: BLEProximityManager.CalibrationResult? {
+        guard proximity.calibrationResult?.podID == pod.podID else { return nil }
+        return proximity.calibrationResult
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ZStack {
+                Circle()
+                    .fill(iconColor.opacity(0.16))
+                    .frame(width: 108, height: 108)
+
+                if let session {
+                    VStack(spacing: 0) {
+                        Text("\(session.sampleCount)")
+                            .font(.system(size: 38, weight: .black, design: .rounded))
+                            .contentTransition(.numericText())
+                        Text("of \(session.targetSampleCount)")
+                            .font(.system(size: 10, weight: .black, design: .rounded))
+                    }
+                    .foregroundStyle(iconColor)
+                } else {
+                    Image(systemName: result?.succeeded == true
+                          ? "checkmark"
+                          : "dot.radiowaves.left.and.right")
+                        .font(.system(size: 38, weight: .bold))
+                        .foregroundStyle(iconColor)
+                }
+            }
+            .padding(.top, 34)
+
+            Text(title)
+                .font(.system(size: 26, weight: .black, design: .rounded))
+                .foregroundStyle(design.text)
+                .padding(.top, 20)
+
+            Text(message)
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .foregroundStyle(design.text.opacity(0.5))
+                .multilineTextAlignment(.center)
+                .lineSpacing(4)
+                .padding(.horizontal, 34)
+                .padding(.top, 8)
+
+            if let session {
+                HStack(spacing: 18) {
+                    reading("Live", session.currentRSSI.map { "\(Int($0.rounded())) dBm" } ?? "Waiting")
+                    reading("Progress", "\(session.sampleCount) / \(session.targetSampleCount)")
+                }
+                .padding(.top, 22)
+            } else if let result, let average = result.averageRSSI, let buffer = result.bufferRSSI {
+                HStack(spacing: 18) {
+                    reading("Edge", "\(Int(average.rounded())) dBm")
+                    reading("Buffer", "\(Int(buffer.rounded())) dBm")
+                }
+                .padding(.top, 22)
+            }
+
+            Spacer()
+
+            Button(action: primaryAction) {
+                Text(buttonTitle)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(PrimaryCTAStyle(tokens: design, isEnabled: pod.isConnected || session != nil || result != nil))
+            .disabled(!pod.isConnected && session == nil && result == nil)
+            .opacity(!pod.isConnected && session == nil && result == nil ? 0.35 : 1)
+            .padding(.horizontal, 22)
+
+            if session != nil {
+                Button("Cancel") {
+                    proximity.cancelCalibration()
+                    dismiss()
+                }
+                .font(.system(size: 12, weight: .black, design: .rounded))
+                .foregroundStyle(design.text.opacity(0.45))
+                .padding(.top, 16)
+            }
+
+            Spacer().frame(height: 20)
+        }
+        .background(design.surface)
+        .onDisappear {
+            if session != nil {
+                proximity.cancelCalibration()
+            }
+            proximity.clearCalibrationResult()
+        }
+    }
+
+    private var title: String {
+        if session != nil { return "Hold still at the edge" }
+        if result != nil { return result?.succeeded == true ? "Room calibrated" : "Try that again" }
+        return "Find the room edge"
+    }
+
+    private var message: String {
+        if session != nil {
+            return "Keep your phone still. Broke will finish automatically after enough valid signal readings. Locking is paused while it measures."
+        }
+        if let result {
+            return result.message
+        }
+        if !pod.isConnected {
+            return "Reconnect \(pod.displayName), then return here to calibrate its room boundary."
+        }
+        return "Move to the edge of \(pod.displayName), where you want apps to switch between locked and unlocked. Stand still, then begin."
+    }
+
+    private var buttonTitle: String {
+        if let session { return "Collecting \(session.sampleCount) / \(session.targetSampleCount)" }
+        if result != nil { return result?.succeeded == true ? "Done" : "Try again" }
+        return "Start calibration"
+    }
+
+    private var iconColor: Color {
+        result?.succeeded == false ? design.signal : design.secondary
+    }
+
+    private func primaryAction() {
+        if session != nil { return }
+        if let result {
+            if result.succeeded {
+                dismiss()
+            } else {
+                proximity.startCalibration(for: pod.podID)
+            }
+        } else {
+            proximity.startCalibration(for: pod.podID)
+        }
+    }
+
+    private func reading(_ label: String, _ value: String) -> some View {
+        VStack(spacing: 4) {
+            Text(label)
+                .font(.system(size: 10, weight: .black, design: .rounded))
+                .foregroundStyle(design.text.opacity(0.35))
+            Text(value)
+                .font(.system(size: 14, weight: .black, design: .monospaced))
+                .foregroundStyle(design.text)
+        }
+        .frame(minWidth: 100)
+        .padding(.vertical, 11)
+        .background(design.muted, in: RoundedRectangle(cornerRadius: 13))
     }
 }
 
 private struct StatusPopup: View {
     let popup: FocusPopup
     let dismiss: () -> Void
+    @Environment(\.designTokens) private var design
 
     @State private var appeared = false
 
@@ -370,7 +774,7 @@ private struct StatusPopup: View {
         VStack(spacing: 0) {
             ZStack {
                 Circle()
-                    .fill(popup.tint.opacity(0.12))
+                    .fill(popup.tint.opacity(0.16))
                     .frame(width: 108, height: 108)
                     .scaleEffect(appeared ? 1 : 0.55)
 
@@ -382,13 +786,13 @@ private struct StatusPopup: View {
             .padding(.top, 34)
 
             Text(popup.title)
-                .font(.system(size: 27, weight: .bold, design: .rounded))
-                .foregroundStyle(Color.ink)
+                .font(.system(size: 27, weight: .black, design: .rounded))
+                .foregroundStyle(design.text)
                 .padding(.top, 20)
 
             Text(popup.message)
-                .font(.system(size: 15, weight: .medium, design: .rounded))
-                .foregroundStyle(Color.ink.opacity(0.5))
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .foregroundStyle(design.text.opacity(0.5))
                 .multilineTextAlignment(.center)
                 .lineSpacing(4)
                 .padding(.horizontal, 34)
@@ -398,18 +802,13 @@ private struct StatusPopup: View {
 
             Button(action: dismiss) {
                 Text(popup.buttonTitle)
-                    .font(.system(size: 14, weight: .black, design: .rounded))
-                    .tracking(1)
-                    .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 54)
-                    .background(Color.ink, in: RoundedRectangle(cornerRadius: 17))
             }
-            .buttonStyle(PressButtonStyle())
+            .buttonStyle(PrimaryCTAStyle(tokens: design, isEnabled: true))
             .padding(.horizontal, 22)
             .padding(.bottom, 20)
         }
-        .background(Color.canvas)
+        .background(design.surface)
         .onAppear {
             withAnimation(.spring(response: 0.48, dampingFraction: 0.7)) {
                 appeared = true
@@ -418,25 +817,55 @@ private struct StatusPopup: View {
     }
 }
 
-private struct PressButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .opacity(configuration.isPressed ? 0.88 : 1)
-            .animation(.easeOut(duration: 0.14), value: configuration.isPressed)
+private struct LockStateBanner: View {
+    let banner: LockBanner
+    @Environment(\.designTokens) private var design
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Circle()
+                .fill(banner.tint)
+                .frame(width: 38, height: 38)
+                .overlay {
+                    Image(systemName: banner.symbol)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(banner.title)
+                    .font(.system(size: 12, weight: .black, design: .rounded))
+                    .foregroundStyle(design.text)
+                Text(banner.message)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(design.text.opacity(0.52))
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 68)
+        .background(design.surface.opacity(0.94), in: RoundedRectangle(cornerRadius: 22))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22)
+                .stroke(design.text.opacity(0.08), lineWidth: 1)
+        }
+        .shadow(color: design.text.opacity(0.1), radius: 22, y: 10)
     }
 }
 
 private extension View {
-    func sectionLabel() -> some View {
-        font(.system(size: 12, weight: .black, design: .rounded))
-            .tracking(2)
-            .foregroundStyle(Color.ink.opacity(0.52))
+    func sectionLabel(tokens: DesignTokens) -> some View {
+        font(.system(size: tokens.type(13), weight: .black, design: .rounded))
+            .foregroundStyle(tokens.text.opacity(0.72))
     }
-}
 
-private extension Color {
-    static let canvas = Color(red: 0.965, green: 0.95, blue: 0.91)
-    static let ink = Color(red: 0.075, green: 0.078, blue: 0.07)
-    static let signal = Color(red: 0.91, green: 0.25, blue: 0.13)
+    func playfulPanel(tokens: DesignTokens) -> some View {
+        padding(tokens.spacing(16))
+            .background(tokens.accentBlue.opacity(0.28), in: RoundedRectangle(cornerRadius: tokens.radius(10)))
+            .overlay {
+                RoundedRectangle(cornerRadius: tokens.radius(10))
+                    .stroke(tokens.text.opacity(0.05), lineWidth: 1)
+            }
+    }
 }

@@ -7,12 +7,14 @@ constexpr char kCalibrationUuid[] = "6f2a0002-8f4d-4b1a-9f1c-7d19d2a10001";
 constexpr char kThresholdUuid[] = "6f2a0003-8f4d-4b1a-9f1c-7d19d2a10001";
 constexpr char kVersionUuid[] = "6f2a0004-8f4d-4b1a-9f1c-7d19d2a10001";
 constexpr char kPodIdUuid[] = "6f2a0005-8f4d-4b1a-9f1c-7d19d2a10001";
+constexpr char kHeartbeatUuid[] = "6f2a0006-8f4d-4b1a-9f1c-7d19d2a10001";
 constexpr char kPodId[] = "BRK-F412FA9FF241";
 
 constexpr int kDefaultCalibrationRssi = -59;
-constexpr int kDefaultThresholdRssi = -70;
+constexpr int kDefaultThresholdRssi = -50;
 constexpr unsigned long kBlinkIntervalMs = 500;
 constexpr unsigned long kStatusIntervalMs = 5000;
+constexpr unsigned long kHeartbeatIntervalMs = 250;
 
 BLEService proximityService(kServiceUuid);
 BLEIntCharacteristic calibrationCharacteristic(
@@ -21,9 +23,13 @@ BLEIntCharacteristic thresholdCharacteristic(
     kThresholdUuid, BLERead | BLEWrite);
 BLEStringCharacteristic versionCharacteristic(kVersionUuid, BLERead, 16);
 BLEStringCharacteristic podIdCharacteristic(kPodIdUuid, BLERead, 32);
+BLEUnsignedLongCharacteristic heartbeatCharacteristic(
+    kHeartbeatUuid, BLERead | BLENotify);
 
 unsigned long lastBlinkAt = 0;
 unsigned long lastStatusAt = 0;
+unsigned long lastHeartbeatAt = 0;
+unsigned long heartbeat = 0;
 bool ledOn = false;
 bool wasConnected = false;
 
@@ -36,7 +42,7 @@ void printHelp() {
   Serial.println("  help       Show this help");
   Serial.println("  status     Show BLE and calibration values");
   Serial.println("  cal -62    Set expected RSSI measured at 1 meter");
-  Serial.println("  threshold -70  Set the initial lock/unlock threshold");
+  Serial.println("  threshold -50  Set the initial lock/unlock threshold");
   Serial.println();
 }
 
@@ -165,12 +171,14 @@ void setup() {
   proximityService.addCharacteristic(thresholdCharacteristic);
   proximityService.addCharacteristic(versionCharacteristic);
   proximityService.addCharacteristic(podIdCharacteristic);
+  proximityService.addCharacteristic(heartbeatCharacteristic);
   BLE.addService(proximityService);
 
   calibrationCharacteristic.writeValue(kDefaultCalibrationRssi);
   thresholdCharacteristic.writeValue(kDefaultThresholdRssi);
   versionCharacteristic.writeValue("1.0.0");
   podIdCharacteristic.writeValue(kPodId);
+  heartbeatCharacteristic.writeValue(heartbeat);
 
   BLE.advertise();
 
@@ -186,6 +194,11 @@ void loop() {
 
   const unsigned long now = millis();
   const bool connected = BLE.connected();
+
+  if (connected && now - lastHeartbeatAt >= kHeartbeatIntervalMs) {
+    lastHeartbeatAt = now;
+    heartbeatCharacteristic.writeValue(++heartbeat);
+  }
 
   if (connected != wasConnected) {
     wasConnected = connected;
