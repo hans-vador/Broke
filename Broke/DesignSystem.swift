@@ -3,31 +3,30 @@ import SwiftUI
 import UIKit
 
 struct DesignTokens: Equatable {
-    var primaryRed = 0.82
-    var primaryGreen = 1.0
-    var primaryBlue = 0.4
+    // Sunset — the production default palette.
+    var primaryRed = 1.0
+    var primaryGreen = 0.72
+    var primaryBlue = 0.3
 
-    var secondaryRed = 0.102
-    var secondaryGreen = 0.227
-    var secondaryBlue = 0.62
+    var secondaryRed = 0.78
+    var secondaryGreen = 0.25
+    var secondaryBlue = 0.36
 
-    // Colors used while a list is locked. Default to a swap of the
-    // unlocked primary/secondary so the stock look is unchanged.
-    var lockedPrimaryRed = 0.102
-    var lockedPrimaryGreen = 0.227
-    var lockedPrimaryBlue = 0.62
+    var lockedPrimaryRed = 1.0
+    var lockedPrimaryGreen = 0.467
+    var lockedPrimaryBlue = 0.51
 
-    var lockedSecondaryRed = 0.82
+    var lockedSecondaryRed = 1.0
     var lockedSecondaryGreen = 1.0
-    var lockedSecondaryBlue = 0.4
+    var lockedSecondaryBlue = 1.0
 
     var accentPinkRed = 1.0
-    var accentPinkGreen = 0.6
-    var accentPinkBlue = 0.8
+    var accentPinkGreen = 0.62
+    var accentPinkBlue = 0.6
 
-    var accentBlueRed = 0.651
-    var accentBlueGreen = 0.757
-    var accentBlueBlue = 1.0
+    var accentBlueRed = 0.99
+    var accentBlueGreen = 0.85
+    var accentBlueBlue = 0.6
 
     var surfaceRed = 1.0
     var surfaceGreen = 1.0
@@ -46,12 +45,36 @@ struct DesignTokens: Equatable {
     var signalBlue = 0.29
 
     var spacingScale = 1.0
-    var radiusScale = 0.65
+    var radiusScale = 1.65
     var typeScale = 1.0
-    var heroScale = 1.0
+    var heroScale = 1.30
     var shadowScale = 0.85
 
     static let production = DesignTokens()
+
+    /// Original lime + navy palette, available as the Citrus preset.
+    static let citrus: DesignTokens = {
+        var tokens = DesignTokens()
+        tokens.primaryRed = 0.82
+        tokens.primaryGreen = 1.0
+        tokens.primaryBlue = 0.4
+        tokens.secondaryRed = 0.102
+        tokens.secondaryGreen = 0.227
+        tokens.secondaryBlue = 0.62
+        tokens.lockedPrimaryRed = 0.102
+        tokens.lockedPrimaryGreen = 0.227
+        tokens.lockedPrimaryBlue = 0.62
+        tokens.lockedSecondaryRed = 0.82
+        tokens.lockedSecondaryGreen = 1.0
+        tokens.lockedSecondaryBlue = 0.4
+        tokens.accentPinkRed = 1.0
+        tokens.accentPinkGreen = 0.6
+        tokens.accentPinkBlue = 0.8
+        tokens.accentBlueRed = 0.651
+        tokens.accentBlueGreen = 0.757
+        tokens.accentBlueBlue = 1.0
+        return tokens
+    }()
 
     var primary: Color { rgb(primaryRed, primaryGreen, primaryBlue) }
     var secondary: Color { rgb(secondaryRed, secondaryGreen, secondaryBlue) }
@@ -252,6 +275,14 @@ struct FruitPersona {
     }
 }
 
+enum FruitFaceMood: Equatable {
+    case normal, happy, surprised, silly, excited
+}
+
+enum FruitMotionPhase: Equatable {
+    case idle, happyJump, sillyStomp, lockSpin
+}
+
 struct FruitMotionPose: Equatable {
     var bodyYOffset: CGFloat = 0
     var bodyRotation: CGFloat = 0
@@ -260,10 +291,24 @@ struct FruitMotionPose: Equatable {
     var armSwing: CGFloat = 0
     var legBend: CGFloat = 0
     var smileBoost: CGFloat = 0
-    /// How far the feet rise off the floor line (in radius units). 0 = planted.
+    /// Symmetric feet rise off the floor line (in radius units). 0 = planted.
     var feetLift: CGFloat = 0
+    /// Per-limb asymmetric controls (radius units) layered on top of the
+    /// symmetric values above. Used for splits jumps and alternating stomps.
+    var leftLegLift: CGFloat = 0
+    var rightLegLift: CGFloat = 0
+    var leftLegOut: CGFloat = 0
+    var rightLegOut: CGFloat = 0
+    var leftArmLift: CGFloat = 0
+    var rightArmLift: CGFloat = 0
+    /// Current high-level animation state.
+    var phase: FruitMotionPhase = .idle
     /// Progress through the jump window, 0...1; 0 while idle.
     var jumpProgress: CGFloat = 0
+    /// Progress through the stomp window, 0...1; 0 otherwise.
+    var stompProgress: CGFloat = 0
+    /// Full-character spin (radians) used by the lock animation.
+    var spinRotation: CGFloat = 0
     /// Leg/body spring squeeze: 0 = neutral, 1 = fully compressed.
     var springCompression: CGFloat = 0
     /// Damped post-landing oscillation, decays to 0.
@@ -271,84 +316,136 @@ struct FruitMotionPose: Equatable {
     /// Sparkle burst phase, 0...1; 0 while idle.
     var sparkleProgress: CGFloat = 0
     /// Sparkle intensity envelope, 0...1.
-    var sparkleBurstStrength: CGFloat = 0
+    var sparkleAmount: CGFloat = 0
+    /// Facial expression for this frame.
+    var faceMood: FruitFaceMood = .normal
 
     static let still = FruitMotionPose()
 
-    /// Calm idle with a phased happy jump: anticipation crouch → launch → airborne
-    /// → landing squash → damped spring settle. Deterministic 5.5s loop.
-    static func strawberryIdle(at time: TimeInterval) -> FruitMotionPose {
-        let sway = sin(time * FruitMotionConstants.swaySpeed)
-        let breathe = sin(time * FruitMotionConstants.bobSpeed)
-        let breatheOffset = CGFloat(breathe) * FruitMotionConstants.bobHeight
+    /// Locked strawberry: a lock/unlock spin takes priority, then a periodic
+    /// happy jump; otherwise a calm idle sway. No tongue/stomp.
+    static func strawberry(at time: TimeInterval, lockSpinElapsed: TimeInterval?) -> FruitMotionPose {
+        let c = FruitMotionConstants.self
+
+        if let elapsed = lockSpinElapsed, elapsed >= 0, elapsed <= c.spinDuration {
+            return lockSpinPose(time: time, t: CGFloat(elapsed / c.spinDuration))
+        }
+
+        let jumpPhase = time.truncatingRemainder(dividingBy: c.cycleLength)
+        if jumpPhase >= c.cycleLength - c.jumpDuration {
+            let t = CGFloat((jumpPhase - (c.cycleLength - c.jumpDuration)) / c.jumpDuration)
+            return jumpPose(time: time, t: t)
+        }
+
+        return idlePose(time: time)
+    }
+
+    /// Unlocked orange: a lock/unlock spin takes priority, then deterministic
+    /// tongue bursts on a longer schedule; otherwise a calm idle sway.
+    static func orange(at time: TimeInterval, lockSpinElapsed: TimeInterval?) -> FruitMotionPose {
+        let c = FruitMotionConstants.self
+
+        if let elapsed = lockSpinElapsed, elapsed >= 0, elapsed <= c.spinDuration {
+            return lockSpinPose(time: time, t: CGFloat(elapsed / c.spinDuration))
+        }
+
+        let phase = time.truncatingRemainder(dividingBy: c.tongueScheduleLength)
+        for start in c.tongueWindowStarts {
+            let windowEnd = start + c.tongueDuration
+            if phase >= start, phase < windowEnd {
+                let t = CGFloat((phase - start) / c.tongueDuration)
+                return sillyStompPose(time: time, t: t)
+            }
+        }
+
+        return idlePose(time: time)
+    }
+
+    /// Constant gentle sway + breathing bob. Arms only lightly follow.
+    static func idle(at time: TimeInterval) -> FruitMotionPose {
+        idlePose(time: time)
+    }
+
+    private static func idlePose(time: TimeInterval) -> FruitMotionPose {
+        let c = FruitMotionConstants.self
+        let sway = CGFloat(sin(time * c.swaySpeed))
+        let breathe = CGFloat(sin(time * c.bobSpeed))
+        return FruitMotionPose(
+            bodyYOffset: breathe * c.bobHeight,
+            bodyRotation: sway * c.swayAngle,
+            armSwing: sway * c.armSwingAngle,
+            phase: .idle,
+            faceMood: .normal
+        )
+    }
+
+    private static func jumpPose(time: TimeInterval, t: CGFloat) -> FruitMotionPose {
+        let c = FruitMotionConstants.self
+        let sway = CGFloat(sin(time * c.swaySpeed))
+        let breathe = CGFloat(sin(time * c.bobSpeed))
+        let breatheOffset = breathe * c.bobHeight
 
         var pose = FruitMotionPose(
             bodyYOffset: breatheOffset,
-            bodyRotation: CGFloat(sway) * FruitMotionConstants.swayAngle,
-            armSwing: CGFloat(sway) * FruitMotionConstants.armSwingAngle
+            bodyRotation: sway * c.swayAngle,
+            phase: .happyJump,
+            jumpProgress: t,
+            faceMood: .happy
         )
 
-        let cycle = FruitMotionConstants.cycleLength
-        let jumpDuration = FruitMotionConstants.jumpDuration
-        let phase = time.truncatingRemainder(dividingBy: cycle)
-        let jumpStart = cycle - jumpDuration
-
-        guard phase >= jumpStart else { return pose }
-
-        let t = CGFloat((phase - jumpStart) / jumpDuration)
-        let c = FruitMotionConstants.self
-
-        // Phase boundaries within the jump window.
         let anticipationEnd: CGFloat = 0.12
         let launchEnd: CGFloat = 0.28
         let airborneEnd: CGFloat = 0.58
         let landingEnd: CGFloat = 0.72
 
-        pose.jumpProgress = t
-
         if t < anticipationEnd {
-            // Anticipation: crouch, legs compress, tiny squash.
             let p = easeIn(t / anticipationEnd)
             pose.springCompression = p
             pose.bodyYOffset = breatheOffset + p * c.anticipationDrop
             pose.bodyScaleX = 1 + p * c.squashX
             pose.bodyScaleY = 1 - p * c.squashY
             pose.legBend = p * c.legCompress
+            pose.faceMood = .normal
 
         } else if t < launchEnd {
-            // Launch: spring releases, body rockets upward, legs extend.
             let p = (t - anticipationEnd) / (launchEnd - anticipationEnd)
             let release = easeOut(p)
             let hop = release * c.jumpHeight * 0.35
-            pose.springCompression = (1 - release)
+            pose.springCompression = 1 - release
             pose.bodyYOffset = breatheOffset - hop
             pose.bodyScaleX = 1 - release * c.stretchX * 0.5
             pose.bodyScaleY = 1 + release * c.stretchY * 0.5
             pose.legBend = (1 - release) * c.legCompress + release * c.legExtend
             pose.feetLift = hop + release * c.feetLiftBoost
+            // Legs start spreading into the splits as we leave the ground.
+            pose.leftLegOut = release * c.jumpLegSplit
+            pose.rightLegOut = release * c.jumpLegSplit
             pose.armSwing = release * c.jumpArmLift
             pose.smileBoost = release * 0.4
+            pose.faceMood = .surprised
             pose.sparkleProgress = p
-            pose.sparkleBurstStrength = release * 0.7
+            pose.sparkleAmount = release * 0.7
 
         } else if t < airborneEnd {
-            // Airborne: higher arc, legs tuck, body stretches tall.
             let p = (t - launchEnd) / (airborneEnd - launchEnd)
-            let arc = sin(p * .pi)
-            let hop = (c.jumpHeight * 0.35 + arc * c.jumpHeight * 0.65)
+            let arc = CGFloat(sin(p * .pi))
+            let hop = c.jumpHeight * 0.35 + arc * c.jumpHeight * 0.65
             pose.springCompression = max(0, (1 - arc) * 0.15)
             pose.bodyYOffset = breatheOffset - hop
             pose.bodyScaleX = 1 - arc * c.stretchX * 0.3
             pose.bodyScaleY = 1 + arc * c.stretchY
-            pose.legBend = c.legExtend + arc * c.legTuck
+            pose.legBend = c.legExtend + arc * c.legTuck * 0.4
             pose.feetLift = hop + arc * c.feetLiftBoost
+            // Full splits at the top of the arc.
+            pose.leftLegOut = (0.4 + arc * 0.6) * c.jumpLegSplit
+            pose.rightLegOut = (0.4 + arc * 0.6) * c.jumpLegSplit
             pose.armSwing = c.jumpArmLift + arc * 0.15
             pose.smileBoost = 0.4 + arc * 0.6
+            pose.faceMood = .surprised
             pose.sparkleProgress = 0.5 + p * 0.5
-            pose.sparkleBurstStrength = 0.7 + arc * 0.3
+            pose.sparkleAmount = 0.7 + arc * 0.3
 
         } else if t < landingEnd {
-            // Landing: descend, impact squash, legs compress, sparkles fade.
             let p = (t - airborneEnd) / (landingEnd - airborneEnd)
             let descend = 1 - easeIn(p)
             let hop = descend * c.jumpHeight * 0.35
@@ -359,13 +456,16 @@ struct FruitMotionPose: Equatable {
             pose.bodyScaleY = 1 - impact * c.squashY
             pose.legBend = c.legCompress * impact + (1 - impact) * c.legExtend
             pose.feetLift = hop
+            // Legs pull back in from the splits as the feet return to the floor.
+            pose.leftLegOut = (1 - impact) * 0.4 * c.jumpLegSplit
+            pose.rightLegOut = (1 - impact) * 0.4 * c.jumpLegSplit
             pose.armSwing = c.jumpArmLift * (1 - p * 0.5)
             pose.smileBoost = (1 - p) * 0.5
+            pose.faceMood = p < 0.5 ? .surprised : .normal
             pose.sparkleProgress = 1 - p
-            pose.sparkleBurstStrength = (1 - p) * 0.5
+            pose.sparkleAmount = (1 - p) * 0.5
 
         } else {
-            // Settle: damped spring oscillation back to equilibrium.
             let p = (t - landingEnd) / (1 - landingEnd)
             let oscillation = dampedSpring(p, damping: c.settleDamping, frequency: c.settleFrequency)
             pose.settleOscillation = oscillation
@@ -374,14 +474,95 @@ struct FruitMotionPose: Equatable {
             pose.bodyScaleY = 1 - abs(oscillation) * c.squashY * 0.5
             pose.legBend = abs(oscillation) * c.legCompress * 0.6
             pose.springCompression = abs(oscillation) * 0.5
-            pose.armSwing = CGFloat(sway) * c.armSwingAngle + oscillation * 0.08
+            pose.armSwing = sway * c.armSwingAngle + oscillation * 0.08
+            pose.faceMood = .normal
         }
 
         return pose
     }
 
+    /// Silly tongue-out burst: legs alternate and arms flap opposite each
+    /// other. Used by the orange mascot only.
+    private static func sillyStompPose(time: TimeInterval, t: CGFloat) -> FruitMotionPose {
+        let c = FruitMotionConstants.self
+        let sway = CGFloat(sin(time * c.swaySpeed))
+        let breathe = CGFloat(sin(time * c.bobSpeed))
+        let breatheOffset = breathe * c.bobHeight
+
+        var pose = FruitMotionPose(
+            bodyYOffset: breatheOffset,
+            bodyRotation: sway * c.swayAngle * 0.6,
+            phase: .sillyStomp,
+            stompProgress: t,
+            faceMood: .silly
+        )
+
+        // Two alternating stomps across the window.
+        let beats: CGFloat = 2
+        let beat = t * beats
+        let idx = Int(floor(beat))
+        let local = beat - floor(beat)                          // 0...1 within a beat
+        let lift = CGFloat(sin(Double(local) * .pi))            // active foot raise/drop
+        let slam = pow(max(0, CGFloat(cos(Double(local) * .pi))), 2) // peak at contact
+        let leftActive = idx % 2 == 0
+
+        if leftActive {
+            // Left foot lifts and stomps; right arm flaps up (opposite).
+            pose.leftLegLift = lift * c.stompFootLift
+            pose.leftLegOut = lift * c.stompFootOut
+            pose.rightArmLift = lift * c.stompArmFlap
+        } else {
+            pose.rightLegLift = lift * c.stompFootLift
+            pose.rightLegOut = lift * c.stompFootOut
+            pose.leftArmLift = lift * c.stompArmFlap
+        }
+
+        pose.legBend = lift * c.legCompress * 0.4
+        pose.bodyYOffset = breatheOffset + slam * c.stompDip
+        pose.bodyScaleX = 1 + slam * c.squashX * 0.7
+        pose.bodyScaleY = 1 - slam * c.squashY * 0.7
+        pose.springCompression = slam * 0.4
+
+        // Soften the silly face at the very start/end so it does not pop.
+        if t < 0.12 || t > 0.88 { pose.faceMood = .normal }
+        return pose
+    }
+
+    /// One-shot happy jump with a full spin, used on lock/unlock transitions.
+    private static func lockSpinPose(time: TimeInterval, t: CGFloat) -> FruitMotionPose {
+        let c = FruitMotionConstants.self
+        let breathe = CGFloat(sin(time * c.bobSpeed))
+        let breatheOffset = breathe * c.bobHeight
+
+        var pose = FruitMotionPose(phase: .lockSpin, faceMood: .excited)
+
+        let arc = CGFloat(sin(Double(t) * .pi))             // up-and-down hop
+        let spin = smoothStep(t) * (.pi * 2)     // one eased full turn
+
+        pose.spinRotation = spin
+        pose.bodyYOffset = breatheOffset - arc * c.spinJumpHeight
+        pose.feetLift = arc * (c.spinJumpHeight + c.feetLiftBoost)
+        pose.legBend = c.legExtend + arc * c.legTuck
+        pose.bodyScaleY = 1 + arc * c.stretchY * 0.6
+        pose.bodyScaleX = 1 - arc * c.stretchX * 0.4
+        pose.armSwing = c.jumpArmLift * arc
+        pose.smileBoost = 0.6 + arc * 0.4
+        pose.sparkleProgress = t
+        pose.sparkleAmount = CGFloat(sin(min(1, Double(t) * 1.1) * .pi))
+
+        // Settle the spin landing with a small squash near the end.
+        if t > 0.85 {
+            let p = (t - 0.85) / 0.15
+            pose.bodyScaleX = 1 + p * c.squashX * 0.6
+            pose.bodyScaleY = 1 - p * c.squashY * 0.6
+            pose.springCompression = p * 0.5
+        }
+        return pose
+    }
+
     private static func easeIn(_ t: CGFloat) -> CGFloat { t * t }
     private static func easeOut(_ t: CGFloat) -> CGFloat { 1 - (1 - t) * (1 - t) }
+    private static func smoothStep(_ t: CGFloat) -> CGFloat { t * t * (3 - 2 * t) }
 
     /// Damped sine that starts at 1 and decays to 0.
     private static func dampedSpring(_ t: CGFloat, damping: CGFloat, frequency: CGFloat) -> CGFloat {
@@ -399,9 +580,25 @@ enum FruitMotionConstants {
     static let swayAngle: CGFloat = 0.02
     static let armSwingAngle: CGFloat = 0.07
 
-    /// Jump cycle timing.
-    static let cycleLength: TimeInterval = 5.5
+    /// Happy-jump cycle timing (strawberry while locked).
+    static let cycleLength: TimeInterval = 18.0
     static let jumpDuration: TimeInterval = 0.85
+
+    /// Tongue-burst timing + limb amounts (orange while unlocked).
+    static let tongueDuration: TimeInterval = 0.85
+    static let tongueWindowStarts: [TimeInterval] = [14.0, 58.0]
+    static let tongueScheduleLength: TimeInterval = 90.0
+    static let stompFootLift: CGFloat = 0.16
+    static let stompFootOut: CGFloat = 0.10
+    static let stompArmFlap: CGFloat = 0.55
+    static let stompDip: CGFloat = 0.06
+
+    /// Outward leg splay for the happy-jump splits pose.
+    static let jumpLegSplit: CGFloat = 0.3
+
+    /// Lock-spin one-shot.
+    static let spinDuration: TimeInterval = 1.0
+    static let spinJumpHeight: CGFloat = 0.4
 
     /// Jump height and body shape.
     static let jumpHeight: CGFloat = 0.44
@@ -424,26 +621,52 @@ enum FruitMotionConstants {
     static let settleBody: CGFloat = 0.035
 }
 
-struct AnimatedStrawberryMascot: View {
+struct StatusAwareMascot: View {
     var size: CGFloat
+    var isLocked: Bool
+    /// Incremented by the parent on each lock/unlock transition.
+    var transitionTrigger: Int = 0
+
+    var body: some View {
+        AnimatedFruitMascot(
+            fruit: isLocked ? .strawberry : .orange,
+            personality: isLocked ? .freckled : .plain,
+            size: size,
+            transitionTrigger: transitionTrigger
+        )
+    }
+}
+
+struct AnimatedFruitMascot: View {
+    var fruit: FruitKind
+    var personality: FruitPersonality
+    var size: CGFloat
+    /// Incremented by the parent on each lock/unlock transition.
+    var transitionTrigger: Int = 0
+
+    @State private var spinStartTime: TimeInterval?
 
     var body: some View {
         TimelineView(.animation) { timeline in
-            let pose = FruitMotionPose.strawberryIdle(
-                at: timeline.date.timeIntervalSinceReferenceDate
-            )
+            let now = timeline.date.timeIntervalSinceReferenceDate
+            let spinElapsed: TimeInterval? = spinStartTime.flatMap { start in
+                let e = now - start
+                return e <= FruitMotionConstants.spinDuration ? e : nil
+            }
+            let pose = pose(at: now, lockSpinElapsed: spinElapsed)
+
             ZStack {
-                if pose.sparkleBurstStrength > 0.01 {
+                if pose.sparkleAmount > 0.01 {
                     Canvas { context, canvasSize in
-                        drawSparkles(context, canvasSize: canvasSize, pose: pose)
+                        drawSparkles(context, canvasSize: canvasSize, pose: pose, fruit: fruit)
                     }
                     .frame(width: size, height: size)
                     .allowsHitTesting(false)
                 }
 
                 FruitCharacter(
-                    fruit: .strawberry,
-                    personality: .freckled,
+                    fruit: fruit,
+                    personality: personality,
                     size: size,
                     pose: pose,
                     showsArms: true
@@ -451,44 +674,73 @@ struct AnimatedStrawberryMascot: View {
             }
             .frame(width: size, height: size)
         }
+        .onChange(of: transitionTrigger) { _, newValue in
+            guard newValue > 0 else { return }
+            spinStartTime = Date.timeIntervalSinceReferenceDate
+        }
+    }
+
+    private func pose(at time: TimeInterval, lockSpinElapsed: TimeInterval?) -> FruitMotionPose {
+        switch fruit {
+        case .strawberry:
+            return .strawberry(at: time, lockSpinElapsed: lockSpinElapsed)
+        case .orange:
+            return .orange(at: time, lockSpinElapsed: lockSpinElapsed)
+        default:
+            return .idle(at: time)
+        }
     }
 
     /// Radial sparkle burst around the whole mascot. Particles are placed at
     /// fixed angles and move outward deterministically from index + phase.
-    private func drawSparkles(_ context: GraphicsContext, canvasSize: CGSize, pose: FruitMotionPose) {
+    private func drawSparkles(_ context: GraphicsContext, canvasSize: CGSize, pose: FruitMotionPose, fruit: FruitKind) {
         let s = min(canvasSize.width, canvasSize.height)
         let center = CGPoint(x: canvasSize.width * 0.5, y: s * 0.46 + pose.bodyYOffset * s * 0.31)
         let r = s * 0.31
-        let strength = pose.sparkleBurstStrength
+        let strength = pose.sparkleAmount
         let progress = pose.sparkleProgress
-        let count = 15
+        let count = 26
 
-        let colors: [Color] = [
-            .white,
-            Color(red: 1.0, green: 0.95, blue: 0.6),
-            Color(red: 1.0, green: 0.78, blue: 0.86),
-            Color(red: 0.95, green: 0.35, blue: 0.42).opacity(0.85)
-        ]
+        let colors: [Color] = {
+            switch fruit {
+            case .strawberry:
+                return [
+                    .white,
+                    Color(red: 1.0, green: 0.95, blue: 0.6),
+                    Color(red: 1.0, green: 0.78, blue: 0.86),
+                    Color(red: 0.95, green: 0.35, blue: 0.42).opacity(0.85)
+                ]
+            case .orange:
+                return [
+                    .white,
+                    Color(red: 1.0, green: 0.95, blue: 0.6),
+                    Color(red: 1.0, green: 0.82, blue: 0.45),
+                    Color(red: 1.0, green: 0.58, blue: 0.16).opacity(0.85)
+                ]
+            default:
+                return [.white, Color(red: 1.0, green: 0.95, blue: 0.6)]
+            }
+        }()
 
         // Envelope: quick rise, fade out before landing settle.
-        let envelope = sin(min(1, progress) * .pi) * strength
+        let envelope = CGFloat(sin(min(1, Double(progress)) * .pi)) * strength
 
         for i in 0..<count {
-            // Fixed angle around the berry; stagger start times per particle.
+            // Fixed angle fully around the berry; stagger start times per particle.
             let baseAngle = (CGFloat(i) / CGFloat(count)) * 2 * .pi - .pi / 2
-            let angle = baseAngle + CGFloat((i * 17) % 7 - 3) * 0.06
+            let angle = baseAngle + CGFloat((i * 17) % 7 - 3) * 0.05
             let stagger = CGFloat((i * 41) % 100) / 100
             let local = min(1, max(0, progress * 1.15 - stagger * 0.2))
 
             // Emitter on a loose ring around the mascot body.
-            let ringR = r * (0.55 + CGFloat(i % 3) * 0.12)
+            let ringR = r * (0.5 + CGFloat(i % 4) * 0.12)
             let emitter = CGPoint(
-                x: center.x + cos(angle) * ringR * 0.85,
-                y: center.y + sin(angle) * ringR * 0.9
+                x: center.x + cos(angle) * ringR * 0.9,
+                y: center.y + sin(angle) * ringR * 0.95
             )
 
             // Radial outward travel with a tiny upward charm drift.
-            let travel = r * (0.15 + local * 0.75) * strength
+            let travel = r * (0.12 + local * 0.8) * strength
             let p = CGPoint(
                 x: emitter.x + cos(angle) * travel,
                 y: emitter.y + sin(angle) * travel - local * r * 0.06
@@ -497,12 +749,12 @@ struct AnimatedStrawberryMascot: View {
             // Soften sparkles that would land directly on the face band.
             let facePenalty: CGFloat = abs(sin(angle)) < 0.35 && abs(p.y - center.y) < r * 0.35 ? 0.35 : 1.0
 
-            let twinkle = 0.55 + 0.45 * sin((progress * 7 + stagger * 5) * .pi)
+            let twinkle = 0.55 + 0.45 * CGFloat(sin(Double(progress * 7 + stagger * 5) * .pi))
             let alpha = Double(envelope * twinkle * facePenalty)
             guard alpha > 0.03 else { continue }
 
             let sizeScale = (1 - local * 0.35) * (0.55 + envelope * 0.45)
-            let particleR = r * 0.09 * sizeScale
+            let particleR = r * 0.08 * sizeScale
             let color = colors[i % colors.count].opacity(min(1, max(0, alpha)))
 
             switch i % 3 {
@@ -567,9 +819,18 @@ struct FruitCharacter: View {
                 y: baseCenter.y + pose.bodyYOffset * radius
             )
 
-            drawLegs(context, baseCenter: baseCenter, center: center, radius: radius, lw: lw)
+            // Spin the entire character (legs, arms, body, face) together
+            // around its center for the lock animation.
+            var rootContext = context
+            if pose.spinRotation != 0 {
+                rootContext.translateBy(x: center.x, y: center.y)
+                rootContext.rotate(by: Angle(radians: Double(pose.spinRotation)))
+                rootContext.translateBy(x: -center.x, y: -center.y)
+            }
 
-            var bodyContext = context
+            drawLegs(rootContext, baseCenter: baseCenter, center: center, radius: radius, lw: lw)
+
+            var bodyContext = rootContext
             bodyContext.translateBy(x: center.x, y: center.y)
             bodyContext.rotate(by: Angle(radians: Double(pose.bodyRotation)))
             bodyContext.scaleBy(x: pose.bodyScaleX, y: pose.bodyScaleY)
@@ -586,7 +847,12 @@ struct FruitCharacter: View {
                 drawSeeds(bodyContext, center: center, radius: radius)
             }
 
-            if personality == .groovy {
+            if fruit == .orange, showsArms {
+                drawOrangeStem(bodyContext, center: center, radius: radius, lw: lw)
+                drawOrangeTexture(bodyContext, center: center, radius: radius)
+            }
+
+            if personality == .groovy, !showsArms {
                 drawHeadphones(bodyContext, center: center, radius: radius, lw: lw)
             }
 
@@ -608,9 +874,14 @@ struct FruitCharacter: View {
             drawShine(context, center: center, radius: r)
 
         case .orange:
-            drawLeaf(context, at: CGPoint(x: center.x + r * 0.18, y: center.y - r * 1.02), scale: r * 0.85)
-            context.fill(circlePath(center: center, radius: r), with: .color(color))
-            drawShine(context, center: center, radius: r)
+            if showsArms {
+                context.fill(orangePath(center: center, radius: r), with: .color(color))
+                drawShine(context, center: CGPoint(x: center.x + r * 0.02, y: center.y - r * 0.04), radius: r * 0.78)
+            } else {
+                drawLeaf(context, at: CGPoint(x: center.x + r * 0.18, y: center.y - r * 1.02), scale: r * 0.85)
+                context.fill(circlePath(center: center, radius: r), with: .color(color))
+                drawShine(context, center: center, radius: r)
+            }
 
         case .lemon:
             let rect = CGRect(x: center.x - r * 1.08, y: center.y - r * 0.84, width: r * 2.16, height: r * 1.68)
@@ -653,6 +924,67 @@ struct FruitCharacter: View {
 
     private func circlePath(center: CGPoint, radius: CGFloat) -> Path {
         Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
+    }
+
+    private func orangePath(center: CGPoint, radius r: CGFloat) -> Path {
+        // Plump rounded body, a touch wider at the equator with a soft flatten
+        // at the bottom so it reads as fruit in the same family as the berry.
+        var p = Path()
+        let cx = center.x
+        let topY = center.y - r * 0.88
+        let wideY = center.y + r * 0.08
+        let botY = center.y + r * 0.96
+        let halfW = r * 0.96
+
+        p.move(to: CGPoint(x: cx, y: botY))
+        p.addQuadCurve(
+            to: CGPoint(x: cx - halfW, y: wideY),
+            control: CGPoint(x: cx - halfW * 0.72, y: center.y + r * 0.76)
+        )
+        p.addQuadCurve(
+            to: CGPoint(x: cx, y: topY),
+            control: CGPoint(x: cx - halfW * 0.98, y: topY + r * 0.08)
+        )
+        p.addQuadCurve(
+            to: CGPoint(x: cx + halfW, y: wideY),
+            control: CGPoint(x: cx + halfW * 0.98, y: topY + r * 0.08)
+        )
+        p.addQuadCurve(
+            to: CGPoint(x: cx, y: botY),
+            control: CGPoint(x: cx + halfW * 0.72, y: center.y + r * 0.76)
+        )
+        p.closeSubpath()
+        return p
+    }
+
+    private func drawOrangeStem(_ context: GraphicsContext, center: CGPoint, radius r: CGFloat, lw: CGFloat) {
+        var stem = Path()
+        let base = CGPoint(x: center.x, y: center.y - r * 0.84)
+        stem.move(to: base)
+        stem.addQuadCurve(
+            to: CGPoint(x: center.x - r * 0.05, y: center.y - r * 1.02),
+            control: CGPoint(x: center.x + r * 0.08, y: center.y - r * 0.95)
+        )
+        context.stroke(stem, with: .color(stemColor), style: StrokeStyle(lineWidth: lw, lineCap: .round))
+        drawLeaf(context, at: CGPoint(x: center.x + r * 0.12, y: center.y - r * 1.0), scale: r * 0.55)
+    }
+
+    private func drawOrangeTexture(_ context: GraphicsContext, center: CGPoint, radius r: CGFloat) {
+        let dimple = Color(red: 0.92, green: 0.48, blue: 0.08).opacity(0.32)
+        let spots: [CGPoint] = [
+            CGPoint(x: -0.36, y: -0.16), CGPoint(x: 0.3, y: -0.26),
+            CGPoint(x: -0.12, y: 0.34), CGPoint(x: 0.4, y: 0.22),
+            CGPoint(x: -0.44, y: 0.4), CGPoint(x: 0.08, y: 0.56)
+        ]
+        for spot in spots {
+            let p = CGPoint(x: center.x + spot.x * r, y: center.y + spot.y * r)
+            context.fill(circlePath(center: p, radius: r * 0.035), with: .color(dimple))
+        }
+        // Small navel dimple at the bottom.
+        context.fill(
+            circlePath(center: CGPoint(x: center.x, y: center.y + r * 0.74), radius: r * 0.045),
+            with: .color(dimple.opacity(0.6))
+        )
     }
 
     private func strawberryPath(center: CGPoint, radius r: CGFloat) -> Path {
@@ -782,30 +1114,34 @@ struct FruitCharacter: View {
     // MARK: Limbs
 
     private func drawArms(_ context: GraphicsContext, center: CGPoint, radius r: CGFloat, lw: CGFloat) {
-        // Roots start under the body edge (drawn before the body, so the shell
-        // overlaps them and they read as connected); hands poke out the sides
-        // and lift up a little during the jump.
-        let shoulderY = center.y + r * 0.04
-        let shoulderSpread = r * 0.6
+        // Roots tuck under the upper-body edge (drawn before the shell, so the
+        // body overlaps them and they read as connected). At rest the noodle
+        // arms hang downward along the sides; a jump raises the hands up/out.
+        let shoulderY = center.y - r * 0.06
+        let shoulderSpread = r * 0.52
         let stroke = StrokeStyle(lineWidth: lw * 0.9, lineCap: .round, lineJoin: .round)
-        let lift = max(0, pose.armSwing) // positive during the jump
+        let baseLift = max(0, pose.armSwing) // symmetric lift during jump / spin
 
         for side in [-1.0, 1.0] {
+            let isLeft = side < 0
+            // Per-arm lift lets the stomp flap arms opposite each other.
+            let lift = baseLift + (isLeft ? pose.leftArmLift : pose.rightArmLift)
             let shoulder = CGPoint(x: center.x + CGFloat(side) * shoulderSpread, y: shoulderY)
             let wiggle = pose.armSwing * CGFloat(-side)
+            // Rest: hand hangs down and slightly out. Lift: hand swings up/out.
             let hand = CGPoint(
-                x: shoulder.x + CGFloat(side) * (r * 0.34 + lift * r * 0.12),
-                y: shoulder.y + r * 0.2 - lift * r * 0.4 + sin(wiggle) * r * 0.05
+                x: shoulder.x + CGFloat(side) * (r * 0.26 + lift * r * 0.34),
+                y: shoulder.y + r * 0.52 - lift * r * 0.86 + sin(wiggle) * r * 0.05
+            )
+            // Control sits out to the side so the arm bows away from the body
+            // before reaching the hand (downward at rest, upward when lifted).
+            let control = CGPoint(
+                x: shoulder.x + CGFloat(side) * (r * 0.32 + lift * r * 0.16),
+                y: shoulder.y + r * 0.24 - lift * r * 0.4
             )
             var arm = Path()
             arm.move(to: shoulder)
-            arm.addQuadCurve(
-                to: hand,
-                control: CGPoint(
-                    x: shoulder.x + CGFloat(side) * r * 0.46,
-                    y: shoulder.y + r * 0.02 - lift * r * 0.18
-                )
-            )
+            arm.addQuadCurve(to: hand, control: control)
             context.stroke(arm, with: .color(ink), style: stroke)
         }
     }
@@ -819,20 +1155,29 @@ struct FruitCharacter: View {
     ) {
         // Hips ride with the body; feet leave the floor only when airborne.
         // Spring compression shortens the leg (knee rises); settle oscillation
-        // adds a damped post-landing wobble.
-        let legTop = center.y + r * 1.0 * pose.bodyScaleY
+        // adds a damped post-landing wobble. The mascot orange is shorter than
+        // the berry, so its hips tuck higher to start under the body (the shell
+        // is drawn over the leg roots, making them read as attached).
+        let legTopFactor: CGFloat = fruit == .orange ? 0.78 : 1.0
+        let legTop = center.y + r * legTopFactor * pose.bodyScaleY
         let floorY = baseCenter.y + r * 1.4
-        let footY = floorY - pose.feetLift * r
         let stroke = StrokeStyle(lineWidth: lw, lineCap: .round, lineJoin: .round)
         let compress = pose.springCompression + abs(pose.settleOscillation) * 0.45
 
         for dx in [-r * 0.2, r * 0.2] {
+            let isLeft = dx < 0
+            let outward = CGFloat(isLeft ? -1 : 1)
+            // Per-leg lift/splay enables splits jumps and alternating stomps.
+            let legLift = pose.feetLift + (isLeft ? pose.leftLegLift : pose.rightLegLift)
+            let legOut = (isLeft ? pose.leftLegOut : pose.rightLegOut) * r
+            let footY = floorY - legLift * r
+
             let hip = CGPoint(x: center.x + dx, y: legTop)
-            let foot = CGPoint(x: baseCenter.x + dx, y: footY)
+            let foot = CGPoint(x: baseCenter.x + dx + outward * legOut, y: footY)
             let midY = (hip.y + foot.y) * 0.5
             // Compression pulls the knee up; legBend bows it outward/inward.
             let knee = CGPoint(
-                x: (hip.x + foot.x) * 0.5 + (dx > 0 ? 1 : -1) * pose.legBend * r * 0.14,
+                x: (hip.x + foot.x) * 0.5 + outward * pose.legBend * r * 0.14,
                 y: midY - compress * r * 0.22 + pose.settleOscillation * r * 0.06
             )
 
@@ -860,9 +1205,7 @@ struct FruitCharacter: View {
 
         switch personality {
         case .plain:
-            dotEye(context, at: CGPoint(x: center.x - gap, y: eyeY), r: eyeR)
-            dotEye(context, at: CGPoint(x: center.x + gap, y: eyeY), r: eyeR)
-            smile(context, center: CGPoint(x: center.x, y: mouthY), width: r * 0.5 * (1 + pose.smileBoost * 0.18), lw: lw)
+            drawExpressiveFace(context, center: center, r: r, eyeY: eyeY, mouthY: mouthY, gap: gap, eyeR: eyeR, smileWidth: smileWidth, lw: lw)
 
         case .awe:
             wideEye(context, at: CGPoint(x: center.x - gap, y: eyeY), r: eyeR * 1.4)
@@ -879,9 +1222,7 @@ struct FruitCharacter: View {
             smile(context, center: CGPoint(x: center.x, y: mouthY), width: r * 0.5 * (1 + pose.smileBoost * 0.18), lw: lw)
 
         case .freckled:
-            dotEye(context, at: CGPoint(x: center.x - gap, y: eyeY), r: eyeR)
-            dotEye(context, at: CGPoint(x: center.x + gap, y: eyeY), r: eyeR)
-            smile(context, center: CGPoint(x: center.x, y: mouthY), width: smileWidth, lw: lw)
+            drawExpressiveFace(context, center: center, r: r, eyeY: eyeY, mouthY: mouthY, gap: gap, eyeR: eyeR, smileWidth: smileWidth, lw: lw)
             freckles(context, center: center, r: r)
 
         case .wink:
@@ -900,6 +1241,62 @@ struct FruitCharacter: View {
             arcEye(context, at: CGPoint(x: center.x + gap, y: eyeY), r: eyeR, lw: lw, up: false)
             smile(context, center: CGPoint(x: center.x, y: mouthY), width: r * 0.3, lw: lw)
         }
+    }
+
+    private func drawExpressiveFace(
+        _ context: GraphicsContext,
+        center: CGPoint,
+        r: CGFloat,
+        eyeY: CGFloat,
+        mouthY: CGFloat,
+        gap: CGFloat,
+        eyeR: CGFloat,
+        smileWidth: CGFloat,
+        lw: CGFloat
+    ) {
+        switch pose.faceMood {
+        case .normal, .happy:
+            dotEye(context, at: CGPoint(x: center.x - gap, y: eyeY), r: eyeR)
+            dotEye(context, at: CGPoint(x: center.x + gap, y: eyeY), r: eyeR)
+            smile(context, center: CGPoint(x: center.x, y: mouthY), width: smileWidth, lw: lw)
+
+        case .surprised:
+            dotEye(context, at: CGPoint(x: center.x - gap, y: eyeY), r: eyeR * 1.15)
+            dotEye(context, at: CGPoint(x: center.x + gap, y: eyeY), r: eyeR * 1.15)
+            context.stroke(
+                circlePath(center: CGPoint(x: center.x, y: mouthY + r * 0.02), radius: r * 0.12),
+                with: .color(ink),
+                style: StrokeStyle(lineWidth: lw * 0.9)
+            )
+
+        case .silly:
+            dotEye(context, at: CGPoint(x: center.x - gap, y: eyeY), r: eyeR)
+            dotEye(context, at: CGPoint(x: center.x + gap, y: eyeY), r: eyeR)
+            tongueMouth(context, center: CGPoint(x: center.x, y: mouthY), r: r, lw: lw)
+
+        case .excited:
+            arcEye(context, at: CGPoint(x: center.x - gap, y: eyeY), r: eyeR * 1.1, lw: lw, up: true)
+            arcEye(context, at: CGPoint(x: center.x + gap, y: eyeY), r: eyeR * 1.1, lw: lw, up: true)
+            context.fill(
+                Path(ellipseIn: CGRect(x: center.x - r * 0.13, y: mouthY - r * 0.02, width: r * 0.26, height: r * 0.2)),
+                with: .color(ink)
+            )
+        }
+    }
+
+    private func tongueMouth(_ context: GraphicsContext, center: CGPoint, r: CGFloat, lw: CGFloat) {
+        var grin = Path()
+        let w = r * 0.42
+        grin.move(to: CGPoint(x: center.x - w / 2, y: center.y))
+        grin.addQuadCurve(
+            to: CGPoint(x: center.x + w / 2, y: center.y),
+            control: CGPoint(x: center.x, y: center.y + w * 0.55)
+        )
+        context.stroke(grin, with: .color(ink), style: StrokeStyle(lineWidth: lw * 0.85, lineCap: .round))
+
+        let tongue = Color(red: 1.0, green: 0.45, blue: 0.55)
+        let tongueRect = CGRect(x: center.x - r * 0.08, y: center.y + r * 0.12, width: r * 0.16, height: r * 0.18)
+        context.fill(Path(roundedRect: tongueRect, cornerRadius: r * 0.08), with: .color(tongue))
     }
 
     private func dotEye(_ context: GraphicsContext, at point: CGPoint, r: CGFloat) {
@@ -985,19 +1382,367 @@ struct FruitCharacter: View {
     }
 }
 
+// MARK: - Lock companion character
+
+enum LockFace { case happy, sleeping, surprised }
+
+struct LockCharacterPose {
+    var bob: CGFloat = 0
+    var hop: CGFloat = 0
+    var scaleX: CGFloat = 1
+    var scaleY: CGFloat = 1
+    var face: LockFace = .happy
+    var sleep: CGFloat = 0
+    var glitter: CGFloat = 0
+    var glitterProgress: CGFloat = 0
+
+    /// A glitter transition takes priority, then an occasional sleep → wake
+    /// idle cycle; otherwise an awake, happy bob. Fully deterministic.
+    static func make(at time: TimeInterval, glitterStart: TimeInterval?) -> LockCharacterPose {
+        var pose = LockCharacterPose()
+        let breathe = CGFloat(sin(time * 2 * .pi / 3.2))
+        pose.bob = breathe * 0.02
+
+        if let start = glitterStart {
+            let elapsed = time - start
+            let duration: TimeInterval = 0.9
+            if elapsed >= 0, elapsed <= duration {
+                let t = CGFloat(elapsed / duration)
+                let env = CGFloat(sin(Double(t) * .pi))
+                pose.glitter = env
+                pose.glitterProgress = t
+                pose.hop = env * 0.12
+                pose.scaleY = 1 + env * 0.06
+                pose.scaleX = 1 - env * 0.03
+                pose.face = .happy
+                return pose
+            }
+        }
+
+        let cycle: TimeInterval = 30
+        let sleepDuration: TimeInterval = 3.6
+        let phase = time.truncatingRemainder(dividingBy: cycle)
+        let sleepStart = cycle - sleepDuration
+        if phase >= sleepStart {
+            let s = CGFloat((phase - sleepStart) / sleepDuration)
+            if s < 0.18 {
+                pose.sleep = s / 0.18
+                pose.face = .sleeping
+            } else if s < 0.82 {
+                pose.sleep = 1
+                pose.face = .sleeping
+                pose.bob = CGFloat(sin(time * 2 * .pi / 2.4)) * 0.012
+            } else {
+                // Surprise itself awake with a little hop.
+                let p = (s - 0.82) / 0.18
+                pose.face = .surprised
+                pose.sleep = max(0, 0.4 * (1 - p))
+                pose.hop = CGFloat(sin(Double(p) * .pi)) * 0.14
+                pose.scaleY = 1 + CGFloat(sin(Double(p) * .pi)) * 0.05
+            }
+            return pose
+        }
+
+        pose.face = .happy
+        return pose
+    }
+}
+
+/// A code-drawn padlock mascot in the same art style as `FruitCharacter`.
+struct LockCharacter: View {
+    var size: CGFloat
+    var isLocked: Bool
+    var transitionTrigger: Int = 0
+
+    @State private var glitterStart: TimeInterval?
+
+    private let ink = Color(red: 0.13, green: 0.11, blue: 0.13)
+    private let bodyColor = Color(red: 1.0, green: 0.79, blue: 0.33)
+    private let metal = Color(red: 0.66, green: 0.69, blue: 0.74)
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let now = timeline.date.timeIntervalSinceReferenceDate
+            let pose = LockCharacterPose.make(at: now, glitterStart: glitterStart)
+            Canvas { context, canvasSize in
+                draw(context, canvasSize: canvasSize, pose: pose, time: now)
+            }
+            .frame(width: size, height: size)
+        }
+        .onChange(of: transitionTrigger) { _, newValue in
+            guard newValue > 0 else { return }
+            glitterStart = Date.timeIntervalSinceReferenceDate
+        }
+    }
+
+    private func draw(_ context: GraphicsContext, canvasSize: CGSize, pose: LockCharacterPose, time: TimeInterval) {
+        let s = min(canvasSize.width, canvasSize.height)
+        let cx = canvasSize.width * 0.5
+        let lw = max(2, s * 0.05)
+
+        let bodyW = s * 0.58 * pose.scaleX
+        let bodyH = s * 0.5 * pose.scaleY
+        let bodyCenter = CGPoint(x: cx, y: s * 0.62 - pose.bob * s - pose.hop * s)
+        let bodyTopY = bodyCenter.y - bodyH / 2
+
+        // Shackle (drawn first so the body covers its legs). Opens when unlocked.
+        let sr = bodyW * 0.3
+        let openLift = isLocked ? 0.0 : 1.0
+        var shackleContext = context
+        let pivot = CGPoint(x: cx - sr, y: bodyTopY)
+        if openLift > 0 {
+            shackleContext.translateBy(x: pivot.x, y: pivot.y)
+            shackleContext.rotate(by: .radians(-0.42 * openLift))
+            shackleContext.translateBy(x: -pivot.x, y: -pivot.y)
+        }
+        var shackle = Path()
+        shackle.move(to: CGPoint(x: cx - sr, y: bodyTopY + sr * 0.25))
+        shackle.addLine(to: CGPoint(x: cx - sr, y: bodyTopY - sr * 0.55))
+        shackle.addArc(center: CGPoint(x: cx, y: bodyTopY - sr * 0.55), radius: sr, startAngle: .degrees(180), endAngle: .degrees(0), clockwise: false)
+        shackle.addLine(to: CGPoint(x: cx + sr, y: bodyTopY + sr * 0.25))
+        shackleContext.stroke(shackle, with: .color(metal), style: StrokeStyle(lineWidth: lw * 1.5, lineCap: .round))
+
+        drawLimbs(context, bodyCenter: bodyCenter, bodyW: bodyW, bodyH: bodyH, s: s, lw: lw)
+
+        // Body + highlight.
+        let bodyRect = CGRect(x: bodyCenter.x - bodyW / 2, y: bodyCenter.y - bodyH / 2, width: bodyW, height: bodyH)
+        context.fill(Path(roundedRect: bodyRect, cornerRadius: bodyH * 0.34), with: .color(bodyColor))
+        context.fill(
+            Path(ellipseIn: CGRect(x: bodyRect.minX + bodyW * 0.12, y: bodyRect.minY + bodyH * 0.12, width: bodyW * 0.26, height: bodyH * 0.22)),
+            with: .color(.white.opacity(0.45))
+        )
+
+        drawFace(context, bodyCenter: bodyCenter, bodyW: bodyW, bodyH: bodyH, s: s, lw: lw, pose: pose)
+
+        if pose.sleep > 0.01 {
+            drawSleep(context, bodyCenter: bodyCenter, bodyW: bodyW, bodyH: bodyH, bodyTopY: bodyTopY, s: s, sleep: pose.sleep, time: time)
+        }
+        if pose.glitter > 0.01 {
+            drawGlitter(context, center: bodyCenter, radius: max(bodyW, bodyH) * 0.62, pose: pose)
+        }
+    }
+
+    private func drawLimbs(_ context: GraphicsContext, bodyCenter: CGPoint, bodyW: CGFloat, bodyH: CGFloat, s: CGFloat, lw: CGFloat) {
+        let stroke = StrokeStyle(lineWidth: lw * 0.9, lineCap: .round, lineJoin: .round)
+        for sx in [-1.0, 1.0] {
+            // Legs.
+            let hip = CGPoint(x: bodyCenter.x + CGFloat(sx) * bodyW * 0.24, y: bodyCenter.y + bodyH * 0.42)
+            let foot = CGPoint(x: hip.x, y: hip.y + s * 0.1)
+            var leg = Path()
+            leg.move(to: hip)
+            leg.addLine(to: foot)
+            context.stroke(leg, with: .color(ink), style: stroke)
+            let fw = s * 0.1
+            context.fill(Path(ellipseIn: CGRect(x: foot.x - fw / 2, y: foot.y - fw * 0.18, width: fw, height: fw * 0.5)), with: .color(ink))
+
+            // Arms.
+            let shoulder = CGPoint(x: bodyCenter.x + CGFloat(sx) * bodyW * 0.46, y: bodyCenter.y - bodyH * 0.02)
+            let hand = CGPoint(x: shoulder.x + CGFloat(sx) * s * 0.05, y: shoulder.y + s * 0.1)
+            var arm = Path()
+            arm.move(to: shoulder)
+            arm.addQuadCurve(to: hand, control: CGPoint(x: shoulder.x + CGFloat(sx) * s * 0.1, y: shoulder.y + s * 0.04))
+            context.stroke(arm, with: .color(ink), style: stroke)
+        }
+    }
+
+    private func drawFace(_ context: GraphicsContext, bodyCenter: CGPoint, bodyW: CGFloat, bodyH: CGFloat, s: CGFloat, lw: CGFloat, pose: LockCharacterPose) {
+        let eyeY = bodyCenter.y - bodyH * 0.06
+        let gap = bodyW * 0.18
+        let eyeR = s * 0.038
+        let mouthY = bodyCenter.y + bodyH * 0.16
+        let stroke = StrokeStyle(lineWidth: lw * 0.7, lineCap: .round)
+
+        func dotEye(_ p: CGPoint, scale: CGFloat = 1) {
+            context.fill(Path(ellipseIn: CGRect(x: p.x - eyeR * scale, y: p.y - eyeR * scale, width: eyeR * 2 * scale, height: eyeR * 2 * scale)), with: .color(ink))
+            context.fill(Path(ellipseIn: CGRect(x: p.x - eyeR * scale * 0.5, y: p.y - eyeR * scale * 0.6, width: eyeR * scale * 0.7, height: eyeR * scale * 0.7)), with: .color(.white))
+        }
+        func closedEye(_ p: CGPoint) {
+            var path = Path()
+            path.move(to: CGPoint(x: p.x - eyeR, y: p.y))
+            path.addQuadCurve(to: CGPoint(x: p.x + eyeR, y: p.y), control: CGPoint(x: p.x, y: p.y + eyeR * 1.1))
+            context.stroke(path, with: .color(ink), style: stroke)
+        }
+
+        switch pose.face {
+        case .happy:
+            dotEye(CGPoint(x: bodyCenter.x - gap, y: eyeY))
+            dotEye(CGPoint(x: bodyCenter.x + gap, y: eyeY))
+            var smile = Path()
+            let w = bodyW * 0.3
+            smile.move(to: CGPoint(x: bodyCenter.x - w / 2, y: mouthY))
+            smile.addQuadCurve(to: CGPoint(x: bodyCenter.x + w / 2, y: mouthY), control: CGPoint(x: bodyCenter.x, y: mouthY + w * 0.55))
+            context.stroke(smile, with: .color(ink), style: stroke)
+
+        case .sleeping:
+            closedEye(CGPoint(x: bodyCenter.x - gap, y: eyeY))
+            closedEye(CGPoint(x: bodyCenter.x + gap, y: eyeY))
+            var smile = Path()
+            let w = bodyW * 0.18
+            smile.move(to: CGPoint(x: bodyCenter.x - w / 2, y: mouthY))
+            smile.addQuadCurve(to: CGPoint(x: bodyCenter.x + w / 2, y: mouthY), control: CGPoint(x: bodyCenter.x, y: mouthY + w * 0.45))
+            context.stroke(smile, with: .color(ink), style: stroke)
+
+        case .surprised:
+            dotEye(CGPoint(x: bodyCenter.x - gap, y: eyeY), scale: 1.25)
+            dotEye(CGPoint(x: bodyCenter.x + gap, y: eyeY), scale: 1.25)
+            context.stroke(
+                Path(ellipseIn: CGRect(x: bodyCenter.x - s * 0.05, y: mouthY - s * 0.02, width: s * 0.1, height: s * 0.1)),
+                with: .color(ink),
+                style: StrokeStyle(lineWidth: lw * 0.7)
+            )
+        }
+    }
+
+    private func drawSleep(_ context: GraphicsContext, bodyCenter: CGPoint, bodyW: CGFloat, bodyH: CGFloat, bodyTopY: CGFloat, s: CGFloat, sleep: CGFloat, time: TimeInterval) {
+        // Breathing snooze bubble by the cheek.
+        let bubbleR = s * 0.045 * (0.6 + 0.4 * CGFloat(sin(time * 2)))
+        let bp = CGPoint(x: bodyCenter.x + bodyW * 0.2, y: bodyCenter.y + bodyH * 0.18)
+        let bubble = Path(ellipseIn: CGRect(x: bp.x - bubbleR, y: bp.y - bubbleR, width: bubbleR * 2, height: bubbleR * 2))
+        context.fill(bubble, with: .color(Color(red: 0.7, green: 0.85, blue: 1.0).opacity(Double(sleep) * 0.5)))
+        context.stroke(bubble, with: .color(metal.opacity(Double(sleep) * 0.6)), lineWidth: max(1, s * 0.012))
+
+        // Rising "z z z" up to the right.
+        let origin = CGPoint(x: bodyCenter.x + bodyW * 0.3, y: bodyTopY - s * 0.02)
+        let floatY = CGFloat(sin(time * 2)) * s * 0.015
+        for i in 0..<3 {
+            let step = CGFloat(i)
+            let p = CGPoint(x: origin.x + step * s * 0.06, y: origin.y - step * s * 0.09 + floatY)
+            var z = context.resolve(Text("z").font(.system(size: s * (0.085 + step * 0.03), weight: .black, design: .rounded)))
+            z.shading = .color(ink.opacity(Double(sleep) * (1 - Double(step) * 0.22)))
+            context.draw(z, at: p)
+        }
+    }
+
+    private func drawGlitter(_ context: GraphicsContext, center: CGPoint, radius: CGFloat, pose: LockCharacterPose) {
+        let count = 12
+        let env = pose.glitter
+        let colors: [Color] = [.white, Color(red: 1.0, green: 0.95, blue: 0.6), Color(red: 1.0, green: 0.82, blue: 0.45)]
+        for i in 0..<count {
+            let angle = CGFloat(i) / CGFloat(count) * 2 * .pi - .pi / 2
+            let travel = radius * (0.35 + pose.glitterProgress * 0.75)
+            let p = CGPoint(x: center.x + cos(angle) * travel, y: center.y + sin(angle) * travel)
+            let pr = radius * 0.07 * (0.6 + env * 0.6)
+            let color = colors[i % colors.count].opacity(Double(env))
+            if i % 2 == 0 {
+                context.fill(starPath(center: p, radius: pr), with: .color(color))
+            } else {
+                context.fill(Path(ellipseIn: CGRect(x: p.x - pr * 0.5, y: p.y - pr * 0.5, width: pr, height: pr)), with: .color(color))
+            }
+        }
+    }
+
+    private func starPath(center: CGPoint, radius: CGFloat) -> Path {
+        var path = Path()
+        let inner = radius * 0.4
+        for i in 0..<8 {
+            let angle = CGFloat(i) * .pi / 4 - .pi / 2
+            let rad = i % 2 == 0 ? radius : inner
+            let point = CGPoint(x: center.x + cos(angle) * rad, y: center.y + sin(angle) * rad)
+            if i == 0 { path.move(to: point) } else { path.addLine(to: point) }
+        }
+        path.closeSubpath()
+        return path
+    }
+}
+
+/// A small code-drawn clock mascot for the locked timer widget.
+struct ClockCharacter: View {
+    var size: CGFloat
+
+    private let ink = Color(red: 0.13, green: 0.11, blue: 0.13)
+    private let faceColor = Color(red: 0.99, green: 0.97, blue: 0.9)
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            Canvas { context, canvasSize in
+                draw(context, canvasSize: canvasSize, date: timeline.date)
+            }
+            .frame(width: size, height: size)
+        }
+    }
+
+    private func draw(_ context: GraphicsContext, canvasSize: CGSize, date: Date) {
+        let s = min(canvasSize.width, canvasSize.height)
+        let time = date.timeIntervalSinceReferenceDate
+        let bob = CGFloat(sin(time * 2 * .pi / 3.0)) * s * 0.02
+        let center = CGPoint(x: canvasSize.width * 0.5, y: s * 0.5 + bob)
+        let r = s * 0.4
+        let lw = max(1.5, s * 0.055)
+
+        // Body.
+        let bodyRect = CGRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2)
+        context.fill(Path(ellipseIn: bodyRect), with: .color(faceColor))
+        context.stroke(Path(ellipseIn: bodyRect), with: .color(ink), lineWidth: lw)
+        context.fill(
+            Path(ellipseIn: CGRect(x: center.x - r * 0.55, y: center.y - r * 0.6, width: r * 0.3, height: r * 0.26)),
+            with: .color(.white.opacity(0.6))
+        )
+
+        // Hands track the current local wall-clock time.
+        let parts = Calendar.current.dateComponents([.hour, .minute, .second], from: date)
+        let hour = Double(parts.hour ?? 0)
+        let minute = Double(parts.minute ?? 0)
+        let second = Double(parts.second ?? 0)
+        let minuteFraction = (minute + second / 60) / 60
+        let hourFraction = (hour.truncatingRemainder(dividingBy: 12) + minute / 60 + second / 3600) / 12
+        let minuteAngle = minuteFraction * 2 * .pi
+        let hourAngle = hourFraction * 2 * .pi
+
+        drawHand(context, center: center, length: r * 0.62, angle: minuteAngle, width: lw)
+        drawHand(context, center: center, length: r * 0.42, angle: hourAngle, width: lw * 1.2)
+        context.fill(Path(ellipseIn: CGRect(x: center.x - lw * 0.7, y: center.y - lw * 0.7, width: lw * 1.4, height: lw * 1.4)), with: .color(ink))
+
+        // Simple face: eyes up high, little smile down low.
+        let eyeR = s * 0.035
+        let eyeY = center.y - r * 0.42
+        for sx in [-1.0, 1.0] {
+            let p = CGPoint(x: center.x + CGFloat(sx) * r * 0.32, y: eyeY)
+            context.fill(Path(ellipseIn: CGRect(x: p.x - eyeR, y: p.y - eyeR, width: eyeR * 2, height: eyeR * 2)), with: .color(ink))
+        }
+        var smile = Path()
+        let w = r * 0.4
+        let smileY = center.y + r * 0.46
+        smile.move(to: CGPoint(x: center.x - w / 2, y: smileY))
+        smile.addQuadCurve(to: CGPoint(x: center.x + w / 2, y: smileY), control: CGPoint(x: center.x, y: smileY + w * 0.5))
+        context.stroke(smile, with: .color(ink), style: StrokeStyle(lineWidth: lw * 0.7, lineCap: .round))
+    }
+
+    private func drawHand(_ context: GraphicsContext, center: CGPoint, length: CGFloat, angle: Double, width: CGFloat) {
+        let end = CGPoint(x: center.x + cos(angle - .pi / 2) * length, y: center.y + sin(angle - .pi / 2) * length)
+        var hand = Path()
+        hand.move(to: center)
+        hand.addLine(to: end)
+        context.stroke(hand, with: .color(ink), style: StrokeStyle(lineWidth: width, lineCap: .round))
+    }
+}
+
 struct PrimaryCTAStyle: ButtonStyle {
     var tokens: DesignTokens
     var isEnabled: Bool
+    /// When set, the button tints to the lock-state primary/secondary colors
+    /// so it matches the rest of the locked/unlocked UI. Nil keeps the
+    /// default unlocked palette (used by sheets and other CTAs).
+    var lockState: Bool? = nil
+
+    private var fill: Color {
+        guard let lockState else { return tokens.primary }
+        return tokens.primaryFor(locked: lockState)
+    }
+
+    private var ink: Color {
+        guard let lockState else { return tokens.secondary }
+        return tokens.secondaryFor(locked: lockState)
+    }
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: tokens.type(16), weight: .black, design: .rounded))
             .tracking(0.6)
-            .foregroundStyle(tokens.secondary)
+            .foregroundStyle(ink)
             .frame(maxWidth: .infinity)
             .frame(height: tokens.spacing(58))
             .background(
-                isEnabled ? tokens.primary : tokens.muted,
+                isEnabled ? fill : tokens.muted,
                 in: RoundedRectangle(cornerRadius: tokens.radius(8))
             )
             .scaleEffect(configuration.isPressed ? 0.97 : 1)

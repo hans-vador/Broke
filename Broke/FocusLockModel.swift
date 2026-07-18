@@ -285,6 +285,19 @@ final class FocusLockModel: ObservableObject {
         nfc.scan(successMessage: isNFCLocked ? "Broke is unlocking your apps." : "Broke is locking your apps.")
     }
 
+#if DEBUG
+    /// Debug-only lock toggle that drives the exact same path as an NFC scan,
+    /// so banners, haptics, the lock timer, notifications, and shields all stay
+    /// consistent. Lets us test the real lock/unlock flow without a tag.
+    func debugToggleLock() {
+        if isNFCLocked {
+            unlockFromNFC()
+        } else {
+            lockFromNFC()
+        }
+    }
+#endif
+
     func useEmergencyUnlock() {
         guard isLocked else { return }
         guard emergencyUnlocksRemaining > 0 else {
@@ -381,7 +394,6 @@ final class FocusLockModel: ObservableObject {
         let previousLockState = isLocked
         isLocked = shouldLock
         updateLockTimer(for: shouldLock)
-        showLockBanner(isLocked: shouldLock)
         sendLockNotification(isLocked: shouldLock)
         scheduleLockFeedback(from: previousLockState, to: shouldLock)
     }
@@ -502,6 +514,10 @@ final class FocusLockModel: ObservableObject {
     }
 
     private func sendLockNotification(isLocked: Bool) {
+        // Only notify when Broke is not in the foreground; while the app is
+        // open the mascot, badge, timer, and haptics already convey the change.
+        guard UIApplication.shared.applicationState != .active else { return }
+
         let content = UNMutableNotificationContent()
         content.title = isLocked ? "Broke locked" : "Broke unlocked"
         content.body = isLocked

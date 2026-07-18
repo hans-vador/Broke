@@ -11,6 +11,7 @@ struct ContentView: View {
     @State private var isNamingProfile = false
     @State private var newProfileName = ""
     @State private var isConfirmingEmergencyUnlock = false
+    @State private var lockAnimationTrigger = 0
 #if DEBUG
     @State private var isShowingDesignPanel = false
 #endif
@@ -41,22 +42,28 @@ struct ContentView: View {
                 .padding(.bottom, design.spacing(28))
             }
 
-            if let banner = model.lockBanner {
-                VStack {
-                    LockStateBanner(banner: banner)
-                        .padding(.horizontal, design.spacing(18))
-                        .padding(.top, design.spacing(10))
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                    Spacer()
-                }
-                .zIndex(10)
-            }
-
 #if DEBUG
             VStack {
                 Spacer()
-                HStack {
+                HStack(spacing: design.spacing(12)) {
                     Spacer()
+                    Button {
+                        model.debugToggleLock()
+                    } label: {
+                        Image(systemName: model.displayedIsLocked ? "lock.open.fill" : "lock.fill")
+                            .font(.system(size: design.type(17), weight: .black))
+                            .foregroundStyle(design.primary)
+                            .frame(width: 52, height: 52)
+                            .background(design.secondary, in: Circle())
+                            .shadow(
+                                color: design.text.opacity(0.14),
+                                radius: design.shadow(20),
+                                y: design.shadow(10)
+                            )
+                    }
+                    .buttonStyle(PressButtonStyle())
+                    .accessibilityLabel(model.displayedIsLocked ? "Dev unlock" : "Dev lock")
+
                     Button {
                         isShowingDesignPanel = true
                     } label: {
@@ -140,6 +147,12 @@ struct ContentView: View {
                 .presentationCornerRadius(30)
         }
 #endif
+        .onChange(of: model.displayedIsLocked) { wasLocked, isLocked in
+            // Trigger the mascot's jump-spin on any lock/unlock transition.
+            if isLocked != wasLocked {
+                lockAnimationTrigger += 1
+            }
+        }
         .task {
             await model.requestAuthorizationIfNeeded()
         }
@@ -147,39 +160,21 @@ struct ContentView: View {
 
     private var header: some View {
         HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(greeting)
-                    .font(.system(size: design.type(24), weight: .black, design: .rounded))
-                    .foregroundStyle(design.text)
-                Text("Less scroll. More life.")
-                    .font(.system(size: design.type(15), weight: .semibold, design: .rounded))
-                    .foregroundStyle(design.text.opacity(0.48))
-            }
+            Text("Broke")
+                .font(.system(size: design.type(24), weight: .black, design: .rounded))
+                .foregroundStyle(design.text)
 
             Spacer()
 
-            HStack(spacing: design.spacing(6)) {
-                Circle()
-                    .fill(model.displayedIsLocked ? design.signal : design.primary)
-                    .frame(width: 8, height: 8)
-                Text(model.displayedIsLocked ? "Locked" : "Open")
-                    .font(.system(size: design.type(12), weight: .black, design: .rounded))
-                    .foregroundStyle(design.text.opacity(0.72))
-            }
-            .padding(.horizontal, design.spacing(12))
-            .frame(height: design.spacing(36))
-            .background(design.muted, in: RoundedRectangle(cornerRadius: design.radius(6)))
+            LockCharacter(
+                size: design.hero(44),
+                isLocked: model.displayedIsLocked,
+                transitionTrigger: lockAnimationTrigger
+            )
+            .frame(width: design.hero(68), height: design.hero(76))
+            .padding(.top, design.spacing(36))
         }
         .padding(.top, design.spacing(16))
-    }
-
-    private var greeting: String {
-        let hour = Calendar.current.component(.hour, from: Date())
-        switch hour {
-        case 5..<12: return "Good morning"
-        case 12..<17: return "Good afternoon"
-        default: return "Good evening"
-        }
     }
 
     private var statusCard: some View {
@@ -187,62 +182,64 @@ struct ContentView: View {
         let base = design.primaryFor(locked: locked)
         let accent = design.secondaryFor(locked: locked)
 
-        return HStack(alignment: .center, spacing: design.spacing(16)) {
-            VStack(alignment: .leading, spacing: design.spacing(6)) {
-                Text(locked ? "Focus is on" : "Ready to focus")
-                    .font(.system(size: design.type(12), weight: .black, design: .rounded))
-                    .foregroundStyle(accent.opacity(locked ? 0.85 : 0.72))
+        return VStack(spacing: design.spacing(10)) {
+            Text(locked ? "Locked" : "Ready to focus?")
+                .font(.system(size: design.type(30), weight: .black, design: .rounded))
+                .foregroundStyle(model.displayedIsLocked ? design.surface : design.text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
 
-                Text(model.displayedIsLocked
-                     ? "The noise is blocked."
-                     : FocusLockModel.isNFCTestBypassEnabled
-                        ? "Ready for a test run."
-                        : "Tap your tag to begin.")
-                    .font(.system(size: design.type(22), weight: .black, design: .rounded))
-                    .foregroundStyle(model.displayedIsLocked ? design.surface : design.text)
-                    .fixedSize(horizontal: false, vertical: true)
+            StatusAwareMascot(
+                size: design.hero(104),
+                isLocked: locked,
+                transitionTrigger: lockAnimationTrigger
+            )
+            .padding(.top, design.spacing(34))
 
-                Text(FocusLockModel.isNFCTestBypassEnabled
-                     ? "Use the button below to test."
-                     : model.displayedIsLocked
-                        ? "Scan your tag to unlock."
-                        : "One scan locks. Next scan unlocks.")
-                    .font(.system(size: design.type(12), weight: .semibold, design: .rounded))
-                    .foregroundStyle(
-                        model.displayedIsLocked
-                            ? design.surface.opacity(0.72)
-                            : design.text.opacity(0.58)
-                    )
-                    .fixedSize(horizontal: false, vertical: true)
+            if locked {
+                HStack(spacing: design.spacing(10)) {
+                    ClockCharacter(size: design.hero(70))
 
-                if locked {
                     HStack(spacing: design.spacing(6)) {
                         Image(systemName: "timer")
-                            .font(.system(size: design.type(11), weight: .black))
+                            .font(.system(size: design.type(12), weight: .black))
                         Text(model.lockDurationText)
-                            .font(.system(size: design.type(13), weight: .black, design: .monospaced))
+                            .font(.system(size: design.type(15), weight: .black, design: .monospaced))
                     }
                     .foregroundStyle(base)
-                    .padding(.horizontal, design.spacing(10))
-                    .padding(.vertical, design.spacing(5))
-                    .background(accent, in: RoundedRectangle(cornerRadius: design.radius(4)))
-                    .padding(.top, design.spacing(2))
-                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    .padding(.horizontal, design.spacing(14))
+                    .padding(.vertical, design.spacing(8))
+                    .background(accent, in: Capsule())
                 }
+                .padding(.top, design.spacing(2))
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
-
-            Spacer(minLength: design.spacing(8))
-
-            AnimatedStrawberryMascot(size: design.hero(104))
         }
         .padding(design.spacing(18))
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(base, in: RoundedRectangle(cornerRadius: design.radius(14)))
+        .accessibilityElement(children: .combine)
         .animation(.spring(response: 0.4, dampingFraction: 0.78), value: locked)
     }
 
     private var appSection: some View {
         VStack(alignment: .leading, spacing: design.spacing(14)) {
+            Button {
+                model.scanTag()
+            } label: {
+                Label(
+                    FocusLockModel.isNFCTestBypassEnabled
+                        ? model.displayedIsLocked ? "Test unlock" : "Test lock"
+                        : model.displayedIsLocked ? "Scan to unlock" : "Scan to lock",
+                    systemImage: FocusLockModel.isNFCTestBypassEnabled
+                        ? "hand.tap.fill"
+                        : "wave.3.right"
+                )
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(PrimaryCTAStyle(tokens: design, isEnabled: model.canScan, lockState: model.displayedIsLocked))
+            .disabled(!model.canScan)
+
             HStack {
                 Text("Block lists")
                     .sectionLabel(tokens: design)
@@ -338,6 +335,7 @@ struct ContentView: View {
     private func blockProfileIsland(_ profile: BlockProfile, index: Int) -> some View {
         let isActive = profile.id == model.activeProfileID
         let ink = isActive ? design.surface : design.text
+        // Each list keeps its own distinct fruit, fixed regardless of lock state.
         let persona = FruitPersona.forBlockList(index)
 
         return Button {
@@ -395,22 +393,6 @@ struct ContentView: View {
 
     private var actionSection: some View {
         VStack(spacing: design.spacing(12)) {
-            Button {
-                model.scanTag()
-            } label: {
-                Label(
-                    FocusLockModel.isNFCTestBypassEnabled
-                        ? model.displayedIsLocked ? "Test unlock" : "Test lock"
-                        : model.displayedIsLocked ? "Scan to unlock" : "Scan to lock",
-                    systemImage: FocusLockModel.isNFCTestBypassEnabled
-                        ? "hand.tap.fill"
-                        : "wave.3.right"
-                )
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(PrimaryCTAStyle(tokens: design, isEnabled: model.canScan))
-            .disabled(!model.canScan)
-
             if model.isLocked {
                 Button {
                     isConfirmingEmergencyUnlock = true

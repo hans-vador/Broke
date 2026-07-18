@@ -42,6 +42,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        [.banner, .list, .sound]
+        // Suppress any foreground presentation: lock/unlock notifications are
+        // only meant for when Broke is backgrounded or inactive.
+        []
     }
 }
