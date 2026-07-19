@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		A10000000000000000000001 /* ShieldConfigurationExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* ShieldConfigurationExtension.swift */; };
 		A10000000000000000000003 /* BrokeShieldConfiguration.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A10000000000000000000004 /* BrokeShieldConfiguration.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A20000000000000000000001 /* Lottie in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000002 /* Lottie */; };
+		A20000000000000000000003 /* StrawberryBlocking.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* StrawberryBlocking.png */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -40,6 +42,7 @@
 		A10000000000000000000004 /* BrokeShieldConfiguration.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BrokeShieldConfiguration.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A10000000000000000000009 /* BrokeShieldConfiguration.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = BrokeShieldConfiguration.entitlements; sourceTree = "<group>"; };
+		A20000000000000000000004 /* StrawberryBlocking.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = StrawberryBlocking.png; sourceTree = "<group>"; };
 		D54D52932FD6BA1800F33275 /* Broke.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Broke.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -63,6 +66,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A20000000000000000000001 /* Lottie in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -73,6 +77,7 @@
 			isa = PBXGroup;
 			children = (
 				A10000000000000000000002 /* ShieldConfigurationExtension.swift */,
+				A20000000000000000000004 /* StrawberryBlocking.png */,
 				A10000000000000000000008 /* Info.plist */,
 				A10000000000000000000009 /* BrokeShieldConfiguration.entitlements */,
 			);
@@ -138,6 +143,7 @@
 			);
 			name = Broke;
 			packageProductDependencies = (
+				A20000000000000000000002 /* Lottie */,
 			);
 			productName = Broke;
 			productReference = D54D52932FD6BA1800F33275 /* Broke.app */;
@@ -170,6 +176,9 @@
 			);
 			mainGroup = D54D528A2FD6BA1800F33275;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				A20000000000000000000005 /* XCRemoteSwiftPackageReference "lottie-ios" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D54D52942FD6BA1800F33275 /* Products */;
 			projectDirPath = "";
@@ -186,6 +195,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A20000000000000000000003 /* StrawberryBlocking.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -503,6 +513,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A20000000000000000000005 /* XCRemoteSwiftPackageReference "lottie-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/airbnb/lottie-ios";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 4.6.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A20000000000000000000002 /* Lottie */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A20000000000000000000005 /* XCRemoteSwiftPackageReference "lottie-ios" */;
+			productName = Lottie;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = D54D528B2FD6BA1800F33275 /* Project object */;
 }

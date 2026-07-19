@@ -35,7 +35,9 @@ final class ShieldConfigurationExtension: ShieldConfigurationDataSource {
         return ShieldConfiguration(
             backgroundBlurStyle: nil,
             backgroundColor: canvas,
-            icon: makeBrokeGraphic(),
+            // Static and intentionally downsampled: shield extensions are
+            // memory-limited and cannot host the Lottie runtime.
+            icon: UIImage(named: "StrawberryBlocking"),
             title: .init(text: "SCROLL BLOCKED", color: ink),
             subtitle: .init(
                 text: "\(subject)\nMove away from your Broke pod or scan your NFC tag to unlock.",
@@ -47,34 +49,4 @@ final class ShieldConfigurationExtension: ShieldConfigurationDataSource {
         )
     }
 
-    private func makeBrokeGraphic() -> UIImage {
-        let size = CGSize(width: 180, height: 180)
-        return UIGraphicsImageRenderer(size: size).image { context in
-            let bounds = CGRect(origin: .zero, size: size)
-            signal.setFill()
-            context.cgContext.fillEllipse(in: bounds.insetBy(dx: 6, dy: 6))
-
-            let symbolConfig = UIImage.SymbolConfiguration(pointSize: 72, weight: .black)
-            let symbol = UIImage(
-                systemName: "lock.fill",
-                withConfiguration: symbolConfig
-            )?.withTintColor(.white, renderingMode: .alwaysOriginal)
-
-            symbol?.draw(
-                in: CGRect(x: 54, y: 43, width: 72, height: 80)
-            )
-
-            context.cgContext.setStrokeColor(UIColor.white.withAlphaComponent(0.72).cgColor)
-            context.cgContext.setLineWidth(5)
-            context.cgContext.setLineCap(.round)
-            context.cgContext.addArc(
-                center: CGPoint(x: 90, y: 90),
-                radius: 72,
-                startAngle: -.pi * 0.18,
-                endAngle: .pi * 0.18,
-                clockwise: false
-            )
-            context.cgContext.strokePath()
-        }
-    }
 }

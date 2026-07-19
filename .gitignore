@@ -8,3 +8,6 @@ build/
 
 # macOS
 .DS_Store
+
+# Large mascot demo recordings (keep local, not in repo)
+MascotArt/*.mp4

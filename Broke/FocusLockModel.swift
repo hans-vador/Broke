@@ -10,6 +10,9 @@ final class FocusLockModel: ObservableObject {
     static let isNFCTestBypassEnabled = false
     private static let lockFeedbackDelay: UInt64 = 300_000_000
     private static let duplicateScanWindow: TimeInterval = 1.25
+#if DEBUG
+    private static let isMascotDemoEnabled = ProcessInfo.processInfo.environment["MASCOT_DEMO"] == "1"
+#endif
 
     @Published var selection: FamilyActivitySelection {
         didSet {
@@ -79,7 +82,13 @@ final class FocusLockModel: ObservableObject {
         blockProfiles = savedProfiles
         activeProfileID = initialProfile.id
         selection = initialProfile.selection
-        isNFCLocked = defaults.bool(forKey: Key.isLocked)
+        let savedLockState = defaults.bool(forKey: Key.isLocked)
+#if DEBUG
+        // Demo mode always starts at idle and does not inherit a persisted lock.
+        isNFCLocked = Self.isMascotDemoEnabled ? false : savedLockState
+#else
+        isNFCLocked = savedLockState
+#endif
         isLocked = isNFCLocked
         displayedIsLocked = isNFCLocked
         lockStartedAt = defaults.object(forKey: Key.lockStartedAt) as? Date
@@ -350,19 +359,40 @@ final class FocusLockModel: ObservableObject {
     }
 
     private func lockFromNFC() {
+#if DEBUG
+        if !Self.isMascotDemoEnabled {
+            guard hasSelection else {
+                popup = .error("Your block list is empty. Choose at least one app.")
+                return
+            }
+        }
+#else
         guard hasSelection else {
             popup = .error("Your block list is empty. Choose at least one app.")
             return
         }
+#endif
 
         isNFCLocked = true
+#if DEBUG
+        if !Self.isMascotDemoEnabled {
+            defaults.set(true, forKey: Key.isLocked)
+        }
+#else
         defaults.set(true, forKey: Key.isLocked)
+#endif
         reconcileLockState(showPopup: true)
     }
 
     private func unlockFromNFC() {
         isNFCLocked = false
+#if DEBUG
+        if !Self.isMascotDemoEnabled {
+            defaults.set(false, forKey: Key.isLocked)
+        }
+#else
         defaults.set(false, forKey: Key.isLocked)
+#endif
         if isBLEPodNear {
             reconcileLockState(showPopup: false)
             popup = .podStillNear
@@ -373,14 +403,36 @@ final class FocusLockModel: ObservableObject {
 
     private func reconcileLockState(showPopup: Bool) {
         let hasActiveTrigger = isNFCLocked || isBLEPodNear
-        let shouldLock = hasSelection && hasActiveTrigger && hasScreenTimeAuthorization
+        var shouldLock = hasSelection && hasActiveTrigger && hasScreenTimeAuthorization
+#if DEBUG
+        if Self.isMascotDemoEnabled {
+            shouldLock = isNFCLocked
+        }
+#endif
 
         if shouldLock {
             applyShields()
         } else {
+#if DEBUG && targetEnvironment(simulator)
+            if !Self.isMascotDemoEnabled {
+                store.clearAllSettings()
+            }
+#else
             store.clearAllSettings()
+#endif
         }
 
+#if DEBUG
+        if !Self.isMascotDemoEnabled,
+           hasActiveTrigger && hasSelection && !hasScreenTimeAuthorization {
+            isLocked = false
+            updateDisplayedLockStateImmediately(false)
+            if showPopup {
+                popup = .screenTimeRequired
+            }
+            return
+        }
+#else
         if hasActiveTrigger && hasSelection && !hasScreenTimeAuthorization {
             isLocked = false
             updateDisplayedLockStateImmediately(false)
@@ -389,6 +441,7 @@ final class FocusLockModel: ObservableObject {
             }
             return
         }
+#endif
 
         guard shouldLock != isLocked else { return }
         let previousLockState = isLocked
@@ -399,6 +452,9 @@ final class FocusLockModel: ObservableObject {
     }
 
     private func applyShields() {
+#if DEBUG && targetEnvironment(simulator)
+        guard !Self.isMascotDemoEnabled else { return }
+#endif
         store.shield.applications = selection.applicationTokens.isEmpty
             ? nil
             : selection.applicationTokens

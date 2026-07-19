@@ -14,6 +14,7 @@ struct ContentView: View {
     @State private var lockAnimationTrigger = 0
 #if DEBUG
     @State private var isShowingDesignPanel = false
+    @State private var isShowingMascotGallery = false
 #endif
 
     private var design: DesignTokens {
@@ -63,6 +64,23 @@ struct ContentView: View {
                     }
                     .buttonStyle(PressButtonStyle())
                     .accessibilityLabel(model.displayedIsLocked ? "Dev unlock" : "Dev lock")
+
+                    Button {
+                        isShowingMascotGallery = true
+                    } label: {
+                        Image(systemName: "photo.on.rectangle.angled")
+                            .font(.system(size: design.type(17), weight: .black))
+                            .foregroundStyle(design.text)
+                            .frame(width: 52, height: 52)
+                            .background(design.surface, in: Circle())
+                            .shadow(
+                                color: design.text.opacity(0.14),
+                                radius: design.shadow(20),
+                                y: design.shadow(10)
+                            )
+                    }
+                    .buttonStyle(PressButtonStyle())
+                    .accessibilityLabel("Open mascot gallery")
 
                     Button {
                         isShowingDesignPanel = true
@@ -146,6 +164,13 @@ struct ContentView: View {
                 .presentationDragIndicator(.visible)
                 .presentationCornerRadius(30)
         }
+        .sheet(isPresented: $isShowingMascotGallery) {
+            MascotGalleryView()
+                .environment(\.designTokens, design)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(30)
+        }
 #endif
         .onChange(of: model.displayedIsLocked) { wasLocked, isLocked in
             // Trigger the mascot's jump-spin on any lock/unlock transition.
@@ -189,11 +214,14 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
 
-            StatusAwareMascot(
-                size: design.hero(104),
-                isLocked: locked,
-                transitionTrigger: lockAnimationTrigger
+            // STRAWBERRY LOTTIE PROTOTYPE. StatusAwareMascot remains in
+            // DesignSystem.swift for a one-line rollback after validation.
+            LottieMascotView(
+                state: locked ? .onDuty : .idle,
+                oneShotState: .celebrate,
+                oneShotTrigger: lockAnimationTrigger
             )
+            .frame(width: design.hero(104), height: design.hero(104))
             .padding(.top, design.spacing(34))
 
             if locked {
