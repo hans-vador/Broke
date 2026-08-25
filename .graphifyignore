@@ -1,0 +1,6 @@
+# Graphify's own skill documentation — indexing it makes the tool's reference
+# pages show up as "communities" in a graph that should be about Broke.
+.claude/skills/
+
+# Generated graph output (belt and braces; graphify skips its own out dir).
+graphify-out/

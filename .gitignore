@@ -22,3 +22,10 @@ MascotArt/retired_layered_rig/
 
 # Scratch output from the image tooling
 tmp/
+
+# Graphify knowledge graph output. Regenerates deterministically from source
+# via `graphify update .`, and the post-commit hook keeps it current, so the
+# ~1.8 MB of graph.json + graph.html does not need to live in history.
+# To share it across machines instead, drop this line — the union merge driver
+# for graph.json is already registered in .git/config.
+graphify-out/
