@@ -1,0 +1,25 @@
+Reproduce the FIRST attached image — a soft-3D claymation blueberry mascot — as
+faithfully as you can, changing exactly ONE thing.
+
+MUST STAY IDENTICAL (this is a fix, not a redesign):
+- the body's shape, silhouette, size and position in the frame
+- the exact same blue-violet colour and matte plasticine surface texture
+- the face: same eyes, same highlights, same eyebrows, same smile, same placement
+- the arms: same shape, length, angle and position
+- the legs: same length, same thickness, same rounded boot-shaped feet, same spacing
+- the same soft studio lighting from the upper left, same camera angle
+- the small crown of petals on top
+
+CHANGE ONLY THIS: where the legs meet the body. In the first image the legs meet
+the underside end-on — a straight-sided peg butted against a curve, with a visible
+seam and a small gap. Redraw that junction so the legs GROW OUT of the body as one
+continuous sculpted piece: the top of each leg widens slightly into the underside
+with a smooth fillet, and there is a soft contact shading where they merge — no
+gap, no seam, no hard corner.
+
+The SECOND attached image (a strawberry mascot) is the reference for how that
+junction should look. Copy its leg-to-body join, nothing else about it.
+
+Output: 1024x1024, the character centred exactly as in the first image, on a fully
+transparent background with a real alpha channel. No outline, no drop shadow, no
+ground plane, no background scenery. Save as blueberry_fixed.png.

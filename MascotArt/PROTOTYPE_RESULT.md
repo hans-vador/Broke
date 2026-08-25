@@ -71,3 +71,34 @@ Debug builds can launch directly into a large, centered mascot preview by settin
 ## Demo mode
 
 Debug builds can show the normal `ContentView` status card automatically cycling through the real lock-state path by launching with `MASCOT_DEMO=1`. For Simulator launches, pass it through with `SIMCTL_CHILD_MASCOT_DEMO=1 xcrun simctl launch <device> <bundle-id>`. The loop starts idle for about 3 seconds, locks for about 4 seconds (celebrate then on-duty), unlocks back to idle, and repeats. Demo mode bypasses Screen Time/ManagedSettings work on the Simulator and takes precedence over the `MASCOT_PREVIEW` gallery hook.
+
+## Layered idle rig
+
+- Replaced the single-image strawberry idle clip with a decode-safe 1254×1254 rig containing five independent top-level image layers (`legL`, `legR`, `body`, `armL`, `armR`) and two optional top-level shape layers for the blink. There are no precomps or nested compositions.
+- Measured opaque bounds before assembly: body `(263, 191, 720×945)`, arm `(469, 287, 290×718)`, and leg `(430, 249, 392×764)`. The tuned static verification render is `MascotArt/layers/strawberry/_assembled_preview.png`; its reproducible assembly utility is alongside it as `assemble.swift`.
+- Added exact copies of the three supplied layer PNGs to `Broke/MascotLottie/images/` as `strawberry_body.png`, `strawberry_arm.png`, and `strawberry_leg.png`. The unmirrored source supplies the mascot's right-side limb and negative X scale supplies the left-side limb.
+- The seamless 3-second, 60 fps idle combines 6-point anti-correlated body squash/stretch, ±12 px bob, ±1.5° sway, opposing eased arm swings up to ±8.5° with phase lag, subtle alternating leg weight shifts, and a 0.12-second blink once per loop. Arm anchors are at `(611, 287)` and leg anchors at `(627, 249)`, the measured top attachment ends.
+- `LottieMascotView` required no code change: `.idle` already resolves to `strawberry_idle` and the existing bundle image provider resolves the new flattened PNG resources. All other state clips remain unchanged.
+- A Debug build for `generic/platform=iOS Simulator` compiled the app, Lottie package, and shield extension and ended with `** BUILD SUCCEEDED **`.
+
+## Idle rig polish
+
+- Replaced the bundled `strawberry_leg.png` with the corrected body-red, stubbier leg art and updated the measured leg attachment anchor to the exact opaque top edge at `(621, 419)`.
+- Reordered the decode-safe top-level layers so the body masks the arm and leg attachment ends, tucked the shoulders inward and hips upward, reduced limb travel, and kept all rotations pivoting at their attachment ends. The rig still contains only five top-level image layers and two blink shape layers, with no precomps.
+- Polished the seamless 3-second idle with breathing, bob, and sway intact; arms now follow the body with a few frames of springy secondary lag and gentler swing, while the feet add a subtle down-beat squash. The quick frame 154–161 blink remains clearly visible once per loop.
+- Rebuilt `MascotArt/layers/strawberry/_assembled_preview.png` from the corrected art and tightened placements so every limb reads as firmly connected.
+- Revalidated the 3-second loop and decode-safe layer structure, then built Debug for `generic/platform=iOS Simulator`; `xcodebuild` ended with `** BUILD SUCCEEDED **`.
+
+## Cohesion fix
+
+- Recolored `arm.png` and `leg.png` with a deterministic luminance-histogram remap onto the red-only palette sampled from `body.png`, excluding the crown, seeds, eyes, and mouth. The limb shading and clay texture remain intact, but limb hue and saturation now come exclusively from actual body-ramp pixels. The corrected assets are mirrored exactly in `Broke/MascotLottie/images/`.
+- Pushed both shoulder anchors 16 px inward and 10 px upward, pushed both hip anchors 8 px inward and 18 px upward, kept the body above every limb root, and reduced arm/leg rotation extremes. The lively breathing, bob, sway, arm lag, weight shift, and blink remain, with deeper overlap throughout the loop.
+- Rebuilt `MascotArt/layers/strawberry/_assembled_preview.png` from the corrected palette and tightened placements. Revalidated five top-level image layers plus two top-level blink shape layers with no precomps, then built Debug for `generic/platform=iOS Simulator`; `xcodebuild` ended with `** BUILD SUCCEEDED **`.
+
+## Appearance customization
+
+- Expanded the color-scheme swatches to Strawberry, Citrus, Sunset, Blueberry, Grape Soda, Matcha, Bubblegum, Midnight, and Mono. Each preset defines cohesive primary, locked, accent pink, accent blue, surface, text, muted, and signal colors, including light foreground colors for Midnight's deep surfaces.
+- Promoted customization into a user-facing Appearance sheet from the palette button in the main header. Preset swatches apply live, while the existing mascot picker remains available.
+- Added independent persisted controls for card corners (Rounded or Sharp), layout density (Cozy or Compact), background (Soft blobs or Plain), block-list mascots (On or Off), and bold headings (On or Off). Defaults preserve Broke's current rounded, cozy, playful look.
+- Routed the preferences through `DesignSettings` and `DesignTokens`, so cards, spacing, hero sizing, backdrop decoration, block-list art, and heading weights update immediately without disturbing the lock flow or the DEBUG `DesignDebugPanel`.
+- Type-checked the complete app module and compiled/linked it with `xcodebuild` for the iOS Simulator 26.5 SDK; verification ended with `** BUILD SUCCEEDED **`.

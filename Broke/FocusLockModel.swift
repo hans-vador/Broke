@@ -7,11 +7,40 @@ import UserNotifications
 
 @MainActor
 final class FocusLockModel: ObservableObject {
+#if DEV_BUILD
+    /// Dev-only: lets the primary button drive the real lock/unlock path without
+    /// a physical tag. Backed by UserDefaults so the dev panel can flip it on
+    /// device; it is a compile-time `false` in shipped builds, so a forgotten
+    /// toggle can never reach TestFlight or the App Store.
+    private static let nfcBypassKey = "devNFCTestBypass"
+    static var isNFCTestBypassEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: nfcBypassKey) }
+        set { UserDefaults.standard.set(newValue, forKey: nfcBypassKey) }
+    }
+#else
     static let isNFCTestBypassEnabled = false
+#endif
     private static let lockFeedbackDelay: UInt64 = 300_000_000
     private static let duplicateScanWindow: TimeInterval = 1.25
 #if DEBUG
     private static let isMascotDemoEnabled = ProcessInfo.processInfo.environment["MASCOT_DEMO"] == "1"
+    /// QA hook: pretend a block list exists so the simulator (which has no
+    /// real FamilyActivityPicker) can still exercise the lock controls.
+    ///
+    /// The simulator can never grant Family Controls authorization, so the
+    /// onboarding permission gate is a dead end there — the dev build stands in
+    /// for it automatically. `FAKE_SELECTION=0` restores the real gate; on a
+    /// device the hook stays off unless `FAKE_SELECTION=1` asks for it.
+    private static let usesFakeSelection: Bool = {
+        if let flag = ProcessInfo.processInfo.environment["FAKE_SELECTION"] {
+            return flag == "1"
+        }
+#if DEV_BUILD && targetEnvironment(simulator)
+        return true
+#else
+        return false
+#endif
+    }()
 #endif
 
     @Published var selection: FamilyActivitySelection {
@@ -32,12 +61,19 @@ final class FocusLockModel: ObservableObject {
     @Published private(set) var lockDurationText = "00:00"
     @Published var lockBanner: LockBanner?
     @Published var popup: FocusPopup?
+    /// How this phone locks. Chosen once during onboarding, then permanent.
+    @Published private(set) var lockMode: LockMode
+    /// Seconds left on an app-only unlock request, or nil when none is running.
+    @Published private(set) var unlockCountdown: Int?
+    /// Whether a paired pod currently has us in range. Published because in
+    /// combined mode the pod can take or release the lock without the lock
+    /// state itself changing, and the copy on screen needs to keep up.
+    @Published private(set) var isBLEPodNear = false
 
     private let store = ManagedSettingsStore(named: .init("BrokeFocus"))
     private let nfc = NFCService()
     private let defaults = UserDefaults.standard
-    private var isNFCLocked: Bool
-    private var isBLEPodNear = false
+    private var isManualLocked: Bool
     private var pendingLockFeedback: (from: Bool, to: Bool)?
     private var lockFeedbackTask: Task<Void, Never>?
     private var lockBannerTask: Task<Void, Never>?
@@ -45,6 +81,8 @@ final class FocusLockModel: ObservableObject {
     private var lockTimer: AnyCancellable?
     private var lastAcceptedPayload: String?
     private var lastAcceptedPayloadDate: Date?
+    private var unlockCountdownTask: Task<Void, Never>?
+    private var hasRequestedNotifications = false
     private var cancellables = Set<AnyCancellable>()
 
     private enum Key {
@@ -58,6 +96,7 @@ final class FocusLockModel: ObservableObject {
     }
 
     init() {
+        lockMode = LockModeStore.current ?? .timer
         let savedProfiles: [BlockProfile]
         if let data = defaults.data(forKey: Key.blockProfiles),
            let decoded = try? JSONDecoder().decode([BlockProfile].self, from: data),
@@ -85,12 +124,12 @@ final class FocusLockModel: ObservableObject {
         let savedLockState = defaults.bool(forKey: Key.isLocked)
 #if DEBUG
         // Demo mode always starts at idle and does not inherit a persisted lock.
-        isNFCLocked = Self.isMascotDemoEnabled ? false : savedLockState
+        isManualLocked = Self.isMascotDemoEnabled ? false : savedLockState
 #else
-        isNFCLocked = savedLockState
+        isManualLocked = savedLockState
 #endif
-        isLocked = isNFCLocked
-        displayedIsLocked = isNFCLocked
+        isLocked = isManualLocked
+        displayedIsLocked = isManualLocked
         lockStartedAt = defaults.object(forKey: Key.lockStartedAt) as? Date
         hasPairedTag = defaults.string(forKey: Key.tagID)?.hasPrefix("broke://tag/v1/") == true
         if defaults.object(forKey: Key.emergencyUnlocksRemaining) == nil {
@@ -108,8 +147,6 @@ final class FocusLockModel: ObservableObject {
         } else {
             clearLockTimer()
         }
-
-        requestNotificationAuthorization()
 
         AuthorizationCenter.shared.$authorizationStatus
             .receive(on: DispatchQueue.main)
@@ -151,15 +188,27 @@ final class FocusLockModel: ObservableObject {
     }
 
     var hasSelection: Bool {
-        selectedItemCount > 0
+#if DEBUG
+        if Self.usesFakeSelection { return true }
+#endif
+        return selectedItemCount > 0
     }
 
     var hasScreenTimeAuthorization: Bool {
-        authorizationStatus == .approved || authorizationStatus == .approvedWithDataAccess
+#if DEBUG
+        // The simulator can never grant Screen Time, so the QA hook stands in
+        // for it. Shield application is already no-op'd on the simulator.
+        if Self.usesFakeSelection { return true }
+#endif
+        return authorizationStatus == .approved || authorizationStatus == .approvedWithDataAccess
     }
 
     var authorizationMessage: String {
-        switch authorizationStatus {
+        // Read through the same accessor the rest of the UI uses, so the
+        // simulator's stand-in for Screen Time doesn't leave the banner saying
+        // "required" next to a green tick and a calm colour.
+        if hasScreenTimeAuthorization { return "Screen Time access enabled" }
+        return switch authorizationStatus {
         case .approved, .approvedWithDataAccess:
             "Screen Time access enabled"
         case .denied:
@@ -171,11 +220,47 @@ final class FocusLockModel: ObservableObject {
         }
     }
 
-    var canScan: Bool {
-        if Self.isNFCTestBypassEnabled {
-            return hasSelection
+    /// Whether the home screen's primary lock control should be tappable.
+    var canToggleLock: Bool {
+        guard hasSelection else { return false }
+        switch lockMode {
+        case .timer:
+            return true
+        case .tag, .both:
+            // In combined mode the tag is still the thing you tap; the pod just
+            // locks you as well.
+            if Self.isNFCTestBypassEnabled { return true }
+            return hasPairedTag && NFCService.isAvailable
+        case .pod:
+            // In pod mode the room does the locking; there is nothing to tap.
+            return false
         }
-        return hasSelection && hasPairedTag && NFCService.isAvailable
+    }
+
+    /// Title for the primary control, which differs a lot per mode.
+    var primaryActionTitle: String {
+        switch lockMode {
+        case .tag:
+            return displayedIsLocked ? "Scan to unlock" : "Scan to lock"
+        case .pod:
+            return displayedIsLocked ? "Blocked by your pod" : "Waiting for your pod"
+        case .both:
+            // The tag stays the control you tap. If the pod is also holding the
+            // lock, scanning explains that rather than pretending to fail.
+            return displayedIsLocked ? "Scan to unlock" : "Scan to lock"
+        case .timer:
+            if unlockCountdown != nil { return "Hang tight…" }
+            return displayedIsLocked ? "Let me back in" : "Lock it up"
+        }
+    }
+
+    var primaryActionSymbol: String {
+        switch lockMode {
+        case .tag: "wave.3.right"
+        case .pod: "sensor.tag.radiowaves.forward"
+        case .both: "wave.3.right"
+        case .timer: displayedIsLocked ? "hourglass" : "lock.fill"
+        }
     }
 
     var canUseEmergencyUnlock: Bool {
@@ -183,19 +268,29 @@ final class FocusLockModel: ObservableObject {
     }
 
     var footerMessage: String {
-        if Self.isNFCTestBypassEnabled {
-            return "Test mode: NFC is disabled. Use the button to lock and unlock."
-        }
-        if !NFCService.isAvailable {
-            return "NFC scanning requires a supported physical iPhone."
-        }
         if !hasSelection {
-            return "Choose at least one app before pairing your tag."
+            return "Pick at least one app, or there's nothing to save you from."
         }
-        if !hasPairedTag {
-            return "Pair the unique prewritten tag supplied with Broke."
+        switch lockMode {
+        case .tag, .both:
+            if Self.isNFCTestBypassEnabled {
+                return "Test mode: NFC is off. Use the button to lock and unlock."
+            }
+            if !NFCService.isAvailable {
+                return "NFC needs a real iPhone. The simulator can't tap a tag."
+            }
+            if !hasPairedTag {
+                return "Pair the tag that came in the box to get started."
+            }
+            if lockMode == .both && isBLEPodNear {
+                return "Your pod has you right now. The tag can't override it."
+            }
+            return lockMode.homeHint
+        case .pod:
+            return LockMode.pod.homeHint
+        case .timer:
+            return LockMode.timer.homeHint
         }
-        return "Only your paired Broke tag can change this lock."
     }
 
     func requestAuthorizationIfNeeded() async {
@@ -277,21 +372,79 @@ final class FocusLockModel: ObservableObject {
         saveProfiles()
     }
 
+    /// Called once onboarding commits the permanent mode, so the live model
+    /// starts routing through the right trigger immediately.
+    func adoptCommittedLockMode() {
+        guard let committed = LockModeStore.current, committed != lockMode else { return }
+        lockMode = committed
+        reconcileLockState(showPopup: false)
+    }
+
+    /// The one thing the home screen's primary button calls. Each mode routes
+    /// it somewhere different.
+    func primaryAction() {
+        switch lockMode {
+        case .tag, .both:
+            scanTag()
+        case .pod:
+            break   // proximity drives everything; the control is display-only
+        case .timer:
+            if unlockCountdown != nil {
+                cancelUnlockCountdown(userInitiated: true)
+            } else if isManualLocked {
+                beginUnlockCountdown()
+            } else {
+                engageLock()
+            }
+        }
+    }
+
     func scanTag() {
         if Self.isNFCTestBypassEnabled {
-            if isNFCLocked {
-                unlockFromNFC()
+            if hasActiveTrigger {
+                releaseLock()
             } else {
-                lockFromNFC()
+                engageLock()
             }
             return
         }
 
         guard hasPairedTag else {
-            popup = .error("Pair your prewritten Broke tag before starting a focus session.")
+            popup = .error("Pair your Broke tag before starting a focus session.")
             return
         }
-        nfc.scan(successMessage: isNFCLocked ? "Broke is unlocking your apps." : "Broke is locking your apps.")
+        nfc.scan(successMessage: hasActiveTrigger ? "Broke is unlocking your apps." : "Broke is locking your apps.")
+    }
+
+    // MARK: - App-only mode: the thirty second cooling-off period
+
+    /// Starts the wait. The apps stay blocked for the whole countdown — that
+    /// pause is the entire product, so it deliberately cannot be skipped.
+    func beginUnlockCountdown() {
+        guard lockMode == .timer, isManualLocked, unlockCountdown == nil else { return }
+        unlockCountdown = UnlockDelay.seconds
+        unlockCountdownTask = Task { @MainActor [weak self] in
+            while let remaining = self?.unlockCountdown, remaining > 0 {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled, let self else { return }
+                guard let current = self.unlockCountdown else { return }
+                self.unlockCountdown = current - 1
+            }
+            guard !Task.isCancelled, let self, self.unlockCountdown != nil else { return }
+            self.unlockCountdown = nil
+            self.unlockCountdownTask = nil
+            self.releaseLock()
+        }
+    }
+
+    func cancelUnlockCountdown(userInitiated: Bool = false) {
+        guard unlockCountdown != nil else { return }
+        unlockCountdownTask?.cancel()
+        unlockCountdownTask = nil
+        unlockCountdown = nil
+        if userInitiated {
+            popup = .stayedStrong
+        }
     }
 
 #if DEBUG
@@ -299,11 +452,32 @@ final class FocusLockModel: ObservableObject {
     /// so banners, haptics, the lock timer, notifications, and shields all stay
     /// consistent. Lets us test the real lock/unlock flow without a tag.
     func debugToggleLock() {
-        if isNFCLocked {
-            unlockFromNFC()
+        debugSetLocked(!isManualLocked)
+    }
+
+    /// Explicit set, so QA launches don't depend on whatever the last run left
+    /// behind in UserDefaults.
+    func debugSetLocked(_ locked: Bool) {
+        if locked {
+            engageLock()
         } else {
-            lockFromNFC()
+            releaseLock()
         }
+    }
+#endif
+
+#if DEV_BUILD
+    /// Dev panel: hand back the emergency unlocks so the exhausted state can be
+    /// tested more than once per install.
+    func devResetEmergencyUnlocks(to count: Int = 3) {
+        emergencyUnlocksRemaining = count
+        defaults.set(count, forKey: Key.emergencyUnlocksRemaining)
+    }
+
+    /// Dev panel: forget the paired tag so pairing can be walked through again.
+    func devForgetPairedTag() {
+        defaults.removeObject(forKey: Key.tagID)
+        hasPairedTag = false
     }
 #endif
 
@@ -317,7 +491,8 @@ final class FocusLockModel: ObservableObject {
         emergencyUnlocksRemaining -= 1
         defaults.set(emergencyUnlocksRemaining, forKey: Key.emergencyUnlocksRemaining)
 
-        isNFCLocked = false
+        isManualLocked = false
+        cancelUnlockCountdown()
         defaults.set(false, forKey: Key.isLocked)
         reconcileLockState(showPopup: false)
         popup = .emergencyUnlocked(emergencyUnlocksRemaining)
@@ -331,6 +506,7 @@ final class FocusLockModel: ObservableObject {
     }
 
     func updateBLEProximity(isNear: Bool) {
+        guard podIsInPlay else { return }
         guard isNear != isBLEPodNear else { return }
         isBLEPodNear = isNear
         reconcileLockState(showPopup: isNear)
@@ -351,14 +527,17 @@ final class FocusLockModel: ObservableObject {
         lastAcceptedPayload = payload
         lastAcceptedPayloadDate = now
 
-        if isNFCLocked {
-            unlockFromNFC()
+        // Toggle against what's actually holding the lock, not just the manual
+        // flag. In combined mode a tap while the pod has you should read as an
+        // unlock attempt (and say so) rather than quietly arming the tag too.
+        if hasActiveTrigger {
+            releaseLock()
         } else {
-            lockFromNFC()
+            engageLock()
         }
     }
 
-    private func lockFromNFC() {
+    private func engageLock() {
 #if DEBUG
         if !Self.isMascotDemoEnabled {
             guard hasSelection else {
@@ -373,7 +552,8 @@ final class FocusLockModel: ObservableObject {
         }
 #endif
 
-        isNFCLocked = true
+        isManualLocked = true
+        cancelUnlockCountdown()
 #if DEBUG
         if !Self.isMascotDemoEnabled {
             defaults.set(true, forKey: Key.isLocked)
@@ -384,8 +564,8 @@ final class FocusLockModel: ObservableObject {
         reconcileLockState(showPopup: true)
     }
 
-    private func unlockFromNFC() {
-        isNFCLocked = false
+    private func releaseLock() {
+        isManualLocked = false
 #if DEBUG
         if !Self.isMascotDemoEnabled {
             defaults.set(false, forKey: Key.isLocked)
@@ -393,7 +573,7 @@ final class FocusLockModel: ObservableObject {
 #else
         defaults.set(false, forKey: Key.isLocked)
 #endif
-        if isBLEPodNear {
+        if isBLEPodNear && podIsInPlay {
             reconcileLockState(showPopup: false)
             popup = .podStillNear
         } else {
@@ -401,12 +581,31 @@ final class FocusLockModel: ObservableObject {
         }
     }
 
+    /// Only the trigger belonging to the chosen mode is allowed to lock. A tag
+    /// user walking past someone else's pod should not get blocked, and an
+    /// app-only user has no hardware in the loop at all.
+    ///
+    /// Combined mode is deliberately an OR: either piece of hardware can lock
+    /// you, so getting back out needs both of them to agree.
+    private var hasActiveTrigger: Bool {
+        switch lockMode {
+        case .tag, .timer: isManualLocked
+        case .pod: isBLEPodNear
+        case .both: isManualLocked || isBLEPodNear
+        }
+    }
+
+    /// Whether the pod is allowed to drive the lock in the chosen mode.
+    private var podIsInPlay: Bool {
+        lockMode == .pod || lockMode == .both
+    }
+
     private func reconcileLockState(showPopup: Bool) {
-        let hasActiveTrigger = isNFCLocked || isBLEPodNear
+        let hasActiveTrigger = self.hasActiveTrigger
         var shouldLock = hasSelection && hasActiveTrigger && hasScreenTimeAuthorization
 #if DEBUG
         if Self.isMascotDemoEnabled {
-            shouldLock = isNFCLocked
+            shouldLock = isManualLocked
         }
 #endif
 
@@ -559,6 +758,22 @@ final class FocusLockModel: ObservableObject {
         }
     }
 
+    /// Deferred until the user reaches the main app — asking during the
+    /// welcome screen interrupts onboarding before they know what Broke is.
+    func requestNotificationAuthorizationIfNeeded() {
+#if DEBUG
+        // QA launches never answer the system prompt, so it would sit on screen
+        // across relaunches and cover every screenshot.
+        // Keyed off the explicit hooks, not the simulator stand-in: an ordinary
+        // dev run on the simulator should still see the real prompt.
+        let env = ProcessInfo.processInfo.environment
+        if env["FAKE_SELECTION"] == "1" || env["ONBOARD_STEP"] != nil { return }
+#endif
+        guard !hasRequestedNotifications else { return }
+        hasRequestedNotifications = true
+        requestNotificationAuthorization()
+    }
+
     private func requestNotificationAuthorization() {
         Task {
             do {
@@ -575,10 +790,10 @@ final class FocusLockModel: ObservableObject {
         guard UIApplication.shared.applicationState != .active else { return }
 
         let content = UNMutableNotificationContent()
-        content.title = isLocked ? "Broke locked" : "Broke unlocked"
+        content.title = isLocked ? "Broke is on duty" : "You're free to roam"
         content.body = isLocked
-            ? "Your selected apps are blocked."
-            : "Your selected apps are available again."
+            ? "Your picked apps are off the table. Go do something with your hands."
+            : "Your apps are back. Try not to make us regret it."
         content.sound = .default
         content.interruptionLevel = .active
 
@@ -639,11 +854,13 @@ struct LockBanner: Identifiable, Equatable {
     let isLocked: Bool
 
     var title: String {
-        isLocked ? "Broke locked" : "Broke unlocked"
+        isLocked ? "Broke is on duty" : "You're free to roam"
     }
 
     var message: String {
-        isLocked ? "Your selected apps are blocked." : "Your selected apps are available again."
+        isLocked
+            ? "Your picked apps are off the table."
+            : "Your apps are back. Use them wisely."
     }
 
     var symbol: String {
@@ -664,6 +881,7 @@ enum FocusPopup: Identifiable {
     case screenTimeRequired
     case emergencyUnlocked(Int)
     case emergencyUnavailable
+    case stayedStrong
     case error(String)
 
     var id: String {
@@ -674,36 +892,40 @@ enum FocusPopup: Identifiable {
         case .screenTimeRequired: "screenTimeRequired"
         case .emergencyUnlocked(let remaining): "emergencyUnlocked-\(remaining)"
         case .emergencyUnavailable: "emergencyUnavailable"
+        case .stayedStrong: "stayedStrong"
         case .error(let message): "error-\(message)"
         }
     }
 
     var title: String {
         switch self {
-        case .tagReady: "Tag is ready."
-        case .wrongTag: "Not your key."
-        case .podStillNear: "A pod is still nearby."
-        case .screenTimeRequired: "Permission needed."
+        case .tagReady: "Tag paired."
+        case .wrongTag: "Wrong tag."
+        case .podStillNear: "Your pod says no."
+        case .screenTimeRequired: "One permission short."
         case .emergencyUnlocked: "Emergency unlock used."
-        case .emergencyUnavailable: "No emergency unlocks left."
-        case .error: "Something went wrong."
+        case .emergencyUnavailable: "That was the last one."
+        case .stayedStrong: "Nice save."
+        case .error: "That didn't work."
         }
     }
 
     var message: String {
         switch self {
         case .tagReady:
-            "This prewritten Broke tag is now paired with this phone. Scan it whenever you want to lock or unlock."
+            "This tag runs the lock now. Tap to lock, tap again to unlock. Losing it is a you problem."
         case .wrongTag:
-            "This NFC tag does not match the one paired with Broke. Find your original focus tag and try again."
+            "Not your tag. Broke only answers to the one you paired."
         case .podStillNear:
-            "The NFC lock is off, but your apps will stay blocked until you leave the range of every paired pod."
+            "Lock's off, but you're still in the pod's room. Walk away and your apps come back."
         case .screenTimeRequired:
-            "The pod is in range, but iOS has not allowed Broke to manage Screen Time yet. Enable access and try again."
+            "iOS hasn't granted Screen Time access yet. Turn it on and we're in business."
         case .emergencyUnlocked(let remaining):
-            "\(remaining) emergency unlock\(remaining == 1 ? "" : "s") remaining. These only reset if Broke is deleted and reinstalled."
+            "\(remaining) left, and they don't come back. Spend them like you mean it."
         case .emergencyUnavailable:
-            "All 3 emergency unlocks have been used. Scan your paired tag to unlock Broke."
+            "All three are gone. Honest way from here."
+        case .stayedStrong:
+            "Countdown called off, streak intact. Most people do."
         case .error(let message):
             message
         }
@@ -717,13 +939,14 @@ enum FocusPopup: Identifiable {
         case .screenTimeRequired: "hourglass.badge.exclamationmark"
         case .emergencyUnlocked: "lock.open.fill"
         case .emergencyUnavailable: "lock.slash.fill"
+        case .stayedStrong: "hand.thumbsup.fill"
         case .error: "exclamationmark.triangle.fill"
         }
     }
 
     var tint: Color {
         switch self {
-        case .tagReady, .emergencyUnlocked:
+        case .tagReady, .emergencyUnlocked, .stayedStrong:
             Color(red: 0.08, green: 0.46, blue: 0.3)
         case .wrongTag, .podStillNear, .screenTimeRequired, .emergencyUnavailable, .error:
             Color(red: 0.83, green: 0.24, blue: 0.17)
@@ -732,10 +955,11 @@ enum FocusPopup: Identifiable {
 
     var buttonTitle: String {
         switch self {
-        case .tagReady: "GOT IT"
-        case .podStillNear: "GOT IT"
+        case .tagReady: "LET'S GO"
+        case .podStillNear: "FAIR ENOUGH"
         case .screenTimeRequired: "ENABLE ACCESS"
         case .emergencyUnlocked: "OK"
+        case .stayedStrong: "PROUD OF ME"
         case .wrongTag, .emergencyUnavailable, .error: "TRY AGAIN"
         }
     }

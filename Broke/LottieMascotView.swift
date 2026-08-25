@@ -10,8 +10,8 @@ enum MascotState: String, Equatable {
     case surprised
     case blocking
 
-    fileprivate var animationName: String {
-        "strawberry_\(rawValue)"
+    fileprivate func animationName(for fruit: FruitKind) -> String {
+        "\(fruit.rawValue)_\(rawValue)"
     }
 
     fileprivate var loops: Bool {
@@ -60,11 +60,21 @@ struct LottieMascotView: UIViewRepresentable {
         }
     }
 
+    /// Which fruit's rig to render. Each fruit has a `<fruit>_idle.json`; only
+    /// the strawberry currently has the extra state clips (onDuty/celebrate/etc.),
+    /// so other fruits gracefully fall back to their own idle.
+    var fruit: FruitKind = .strawberry
     /// The state to return to after a one-shot finishes.
     var state: MascotState
     /// Optional one-shot fired when `oneShotTrigger` changes.
     var oneShotState: MascotState?
     var oneShotTrigger: Int = 0
+
+    /// Honoured here rather than at each call site. `ClayFruitView` already
+    /// swapped in static art under Reduce Motion, but the status card, the
+    /// onboarding steps and the gallery build the rig directly — so the
+    /// biggest animation in the app was the one ignoring the setting.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -78,8 +88,10 @@ struct LottieMascotView: UIViewRepresentable {
             searchPath: nil
         )
 
+        context.coordinator.fruit = fruit
         context.coordinator.baseState = state
         context.coordinator.lastOneShotTrigger = oneShotTrigger
+        context.coordinator.isMotionReduced = reduceMotion
         context.coordinator.playBase(state, in: animationView)
         return container
     }
@@ -87,7 +99,22 @@ struct LottieMascotView: UIViewRepresentable {
     func updateUIView(_ container: ContainerView, context: Context) {
         let coordinator = context.coordinator
         let animationView = container.animationView
+        // If the fruit changed (e.g. mascot picker), reload from scratch.
+        let fruitChanged = coordinator.fruit != fruit
+        let motionChanged = coordinator.isMotionReduced != reduceMotion
+        coordinator.fruit = fruit
         coordinator.baseState = state
+        coordinator.isMotionReduced = reduceMotion
+        if fruitChanged || motionChanged {
+            coordinator.playBase(state, in: animationView)
+            return
+        }
+
+        // Under Reduce Motion the rig is parked on its first frame, so a
+        // celebrate burst would be a jump cut rather than an animation.
+        if reduceMotion {
+            return
+        }
 
         if let oneShotState,
            !oneShotState.loops,
@@ -129,10 +156,12 @@ struct LottieMascotView: UIViewRepresentable {
             category: "LottieMascot"
         )
 
+        var fruit: FruitKind = .strawberry
         var baseState: MascotState = .idle
         var currentState: MascotState?
         var lastOneShotTrigger = 0
         var isPlayingOneShot = false
+        var isMotionReduced = false
         private var playbackGeneration = 0
 
         func playBase(_ state: MascotState, in view: LottieAnimationView) {
@@ -140,6 +169,13 @@ struct LottieMascotView: UIViewRepresentable {
             isPlayingOneShot = false
 
             guard load(state, in: view) else { return }
+
+            // Reduce Motion: hold the pose instead of looping. The character
+            // is still there and still on model — it just stops moving.
+            guard !isMotionReduced else {
+                view.currentProgress = 0
+                return
+            }
 
             view.loopMode = state.loops ? .loop : .playOnce
             view.play()
@@ -169,27 +205,26 @@ struct LottieMascotView: UIViewRepresentable {
 
         @discardableResult
         private func load(_ state: MascotState, in view: LottieAnimationView) -> Bool {
+            let clipName = state.animationName(for: fruit)
             guard let animation = LottieAnimation.named(
-                state.animationName,
+                clipName,
                 bundle: .main
             ) else {
-                Self.logger.error("Failed to load Lottie mascot clip: \(state.animationName, privacy: .public)")
+                Self.logger.error("Failed to load Lottie mascot clip: \(clipName, privacy: .public)")
 
-                // Preserve a working clip. On first load, make one safe attempt
-                // to establish idle without recursively retrying it.
-                if view.animation == nil,
-                   state != .idle,
-                   let idleAnimation = LottieAnimation.named(
-                       MascotState.idle.animationName,
-                       bundle: .main
-                   ) {
+                // This fruit lacks this state (only strawberry has non-idle
+                // clips). Fall back to THIS fruit's own idle clip.
+                let idleName = MascotState.idle.animationName(for: fruit)
+                if state != .idle,
+                   let idleAnimation = LottieAnimation.named(idleName, bundle: .main) {
+                    view.stop()
                     currentState = .idle
                     view.animation = idleAnimation
                     view.currentProgress = 0
                     view.loopMode = .loop
-                    view.play()
-                } else if view.animation == nil, state != .idle {
-                    Self.logger.error("Failed to load fallback Lottie mascot clip: \(MascotState.idle.animationName, privacy: .public)")
+                    if !isMotionReduced { view.play() }
+                } else if state != .idle {
+                    Self.logger.error("Failed to load fallback Lottie mascot clip: \(idleName, privacy: .public)")
                 }
                 return false
             }

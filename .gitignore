@@ -11,3 +11,14 @@ build/
 
 # Large mascot demo recordings (keep local, not in repo)
 MascotArt/*.mp4
+
+# Mascot working art: source layers, retired rigs and preview renders.
+# The app bundles what it needs from Broke/Assets.xcassets and
+# Broke/MascotLottie; these are the large intermediates behind them.
+MascotArt/layers/
+MascotArt/retired_layered_rig/
+**/*.mp4
+**/*.gif
+
+# Scratch output from the image tooling
+tmp/

@@ -13,12 +13,43 @@ struct ContentView: View {
     @State private var isConfirmingEmergencyUnlock = false
     @State private var lockAnimationTrigger = 0
 #if DEBUG
-    @State private var isShowingDesignPanel = false
-    @State private var isShowingMascotGallery = false
+    @State private var isShowingCustomize =
+        ProcessInfo.processInfo.environment["SHOW_SETTINGS"] == "1"
+#else
+    @State private var isShowingCustomize = false
 #endif
+    @AppStorage(AppPreferenceKey.selectedMascot) private var selectedMascotRawValue = FruitKind.strawberry.rawValue
+    @AppStorage(AppPreferenceKey.selectedScheme) private var selectedSchemeRawValue = DesignScheme.strawberry.rawValue
 
     private var design: DesignTokens {
         designSettings.tokens
+    }
+
+    private var selectedMascot: FruitKind {
+        FruitKind(rawValue: selectedMascotRawValue) ?? .strawberry
+    }
+
+    /// The rigs are drawn on a square canvas with a fair margin around the
+    /// character, so the compact card leans on the spotlight for presence and
+    /// gives back the height the empty margin was eating.
+    private var mascotSize: CGFloat {
+        design.usesCompactStatusCard ? 138 : 150
+    }
+
+    /// Shared by the list cards and the "New list" card so the row lines up.
+    /// Sized so a fresh install's two cards (one list plus "New list") sit
+    /// inside the content width rather than running under the screen edge:
+    /// 2 × hero(122) + spacing(14) ≈ 341pt against 358pt of usable width.
+    private let blockCardWidth: CGFloat = 122
+
+    /// Debug builds float a lock toggle over the bottom-right corner, which
+    /// sat on top of the footer line. Leave it room to land.
+    private var contentBottomInset: CGFloat {
+#if DEBUG
+        design.spacing(28) + 46
+#else
+        design.spacing(28)
+#endif
     }
 
     var body: some View {
@@ -29,78 +60,47 @@ struct ContentView: View {
                 VStack(spacing: design.spacing(0)) {
                     header
                     statusCard
-                        .padding(.top, design.spacing(28))
+                        .padding(.top, design.spacing(20))
                     appSection
-                        .padding(.top, design.spacing(32))
-                    proximitySection
-                        .padding(.top, design.spacing(28))
+                        .padding(.top, design.spacing(24))
+                    // Only the hardware you actually signed up for gets a section.
+                    if model.lockMode == .pod || model.lockMode == .both {
+                        proximitySection
+                            .padding(.top, design.spacing(28))
+                    }
                     actionSection
                         .padding(.top, design.spacing(28))
                     footer
                         .padding(.top, design.spacing(30))
                 }
                 .padding(.horizontal, design.spacing(22))
-                .padding(.bottom, design.spacing(28))
+                .padding(.bottom, contentBottomInset)
             }
 
 #if DEBUG
             VStack {
                 Spacer()
-                HStack(spacing: design.spacing(12)) {
+                HStack {
                     Spacer()
                     Button {
                         model.debugToggleLock()
                     } label: {
                         Image(systemName: model.displayedIsLocked ? "lock.open.fill" : "lock.fill")
-                            .font(.system(size: design.type(17), weight: .black))
-                            .foregroundStyle(design.primary)
-                            .frame(width: 52, height: 52)
-                            .background(design.secondary, in: Circle())
-                            .shadow(
-                                color: design.text.opacity(0.14),
-                                radius: design.shadow(20),
-                                y: design.shadow(10)
-                            )
-                    }
-                    .buttonStyle(PressButtonStyle())
-                    .accessibilityLabel(model.displayedIsLocked ? "Dev unlock" : "Dev lock")
-
-                    Button {
-                        isShowingMascotGallery = true
-                    } label: {
-                        Image(systemName: "photo.on.rectangle.angled")
-                            .font(.system(size: design.type(17), weight: .black))
+                            .font(.system(size: design.type(12), weight: .bold))
                             .foregroundStyle(design.text)
-                            .frame(width: 52, height: 52)
-                            .background(design.surface, in: Circle())
-                            .shadow(
-                                color: design.text.opacity(0.14),
-                                radius: design.shadow(20),
-                                y: design.shadow(10)
-                            )
+                            .frame(width: 34, height: 34)
+                            .background(design.surface.opacity(0.94), in: Circle())
+                            .overlay {
+                                Circle().stroke(design.text.opacity(0.12), lineWidth: 1)
+                            }
+                            .shadow(color: design.text.opacity(0.1), radius: 8, y: 3)
                     }
                     .buttonStyle(PressButtonStyle())
-                    .accessibilityLabel("Open mascot gallery")
-
-                    Button {
-                        isShowingDesignPanel = true
-                    } label: {
-                        Image(systemName: "paintpalette.fill")
-                            .font(.system(size: design.type(17), weight: .black))
-                            .foregroundStyle(design.secondary)
-                            .frame(width: 52, height: 52)
-                            .background(design.primary, in: Circle())
-                            .shadow(
-                                color: design.text.opacity(0.14),
-                                radius: design.shadow(20),
-                                y: design.shadow(10)
-                            )
-                    }
-                    .buttonStyle(PressButtonStyle())
-                    .accessibilityLabel("Open design controls")
+                    .opacity(0.58)
+                    .accessibilityLabel(model.displayedIsLocked ? "Developer unlock" : "Developer lock")
                 }
-                .padding(.horizontal, design.spacing(22))
-                .padding(.bottom, design.spacing(22))
+                .padding(.trailing, 12)
+                .padding(.bottom, 12)
             }
             .zIndex(20)
 #endif
@@ -122,7 +122,7 @@ struct ContentView: View {
                 isChoosingApps = true
             }
         } message: {
-            Text("Create another set of apps you can switch to instantly.")
+            Text("A separate set of apps you can switch to in one tap — strict for work, looser for weekends.")
         }
         .confirmationDialog(
             "Use an emergency unlock?",
@@ -134,7 +134,7 @@ struct ContentView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("You only get 3 emergency unlocks. They do not come back unless Broke is deleted and reinstalled.")
+            Text("You get three, ever. They don't come back unless Broke is deleted and reinstalled — so save them for the real emergencies.")
         }
         .sheet(item: $model.popup) { popup in
             StatusPopup(popup: popup) {
@@ -157,49 +157,94 @@ struct ContentView: View {
             .presentationDragIndicator(.hidden)
             .presentationCornerRadius(34)
         }
-#if DEBUG
-        .sheet(isPresented: $isShowingDesignPanel) {
-            DesignDebugPanel(settings: designSettings)
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
-                .presentationCornerRadius(30)
-        }
-        .sheet(isPresented: $isShowingMascotGallery) {
-            MascotGalleryView()
+        .sheet(isPresented: $isShowingCustomize) {
+            AppearanceSettingsView(
+                selectedMascotRawValue: $selectedMascotRawValue,
+                selectedSchemeRawValue: $selectedSchemeRawValue,
+                lockMode: model.lockMode
+            )
                 .environment(\.designTokens, design)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
                 .presentationCornerRadius(30)
         }
-#endif
+        .onChange(of: selectedSchemeRawValue) { _, newValue in
+            guard let scheme = DesignScheme(rawValue: newValue) else { return }
+            withAnimation(.easeInOut(duration: 0.24)) {
+                designSettings.apply(scheme)
+            }
+        }
         .onChange(of: model.displayedIsLocked) { wasLocked, isLocked in
-            // Trigger the mascot's jump-spin on any lock/unlock transition.
+            // Trigger the mascot's celebration on any lock/unlock transition.
             if isLocked != wasLocked {
-                lockAnimationTrigger += 1
+                withAnimation(.spring(response: 0.52, dampingFraction: 0.58)) {
+                    lockAnimationTrigger += 1
+                }
             }
         }
         .task {
             await model.requestAuthorizationIfNeeded()
+            model.requestNotificationAuthorizationIfNeeded()
         }
     }
 
     private var header: some View {
-        HStack(alignment: .center) {
+        HStack(alignment: .center, spacing: design.spacing(12)) {
             Text("Broke")
-                .font(.system(size: design.type(24), weight: .black, design: .rounded))
+                .font(.system(size: design.type(24), weight: design.headingWeight, design: .rounded))
                 .foregroundStyle(design.text)
 
-            Spacer()
+            Spacer(minLength: design.spacing(8))
 
-            LockCharacter(
-                size: design.hero(44),
-                isLocked: model.displayedIsLocked,
-                transitionTrigger: lockAnimationTrigger
-            )
-            .frame(width: design.hero(68), height: design.hero(76))
-            .padding(.top, design.spacing(36))
+            if !design.showsSupportingCharacters {
+                lockStatusPill
+            }
+
+            Button {
+                isShowingCustomize = true
+            } label: {
+                Image(systemName: "paintpalette.fill")
+                    .font(.system(size: design.type(15), weight: .bold))
+                    .foregroundStyle(design.secondary)
+                    .frame(width: 38, height: 38)
+                    .background(design.primary, in: Circle())
+                    .shadow(color: design.primary.opacity(0.18), radius: 8, y: 4)
+            }
+            .buttonStyle(PressButtonStyle())
+            .accessibilityLabel("Customize")
+
+            if design.showsSupportingCharacters {
+                Image(model.displayedIsLocked ? "clay_lock_locked" : "clay_lock_unlocked")
+                    .resizable()
+                    .scaledToFit()
+                    .id(lockAnimationTrigger)
+                    .transition(.scale(scale: 0.88).combined(with: .opacity))
+                    .frame(width: design.hero(68), height: design.hero(76))
+                    .accessibilityHidden(true)
+            }
         }
         .padding(.top, design.spacing(16))
+    }
+
+    /// Stands in for the clay padlock. Same job — tell you at a glance whether
+    /// you're locked — without putting a second character next to the mascot,
+    /// and it says the state out loud instead of implying it.
+    private var lockStatusPill: some View {
+        let locked = model.displayedIsLocked
+
+        return HStack(spacing: design.spacing(6)) {
+            Image(systemName: locked ? "lock.fill" : "lock.open.fill")
+                .font(.system(size: design.type(11), weight: .black))
+                .contentTransition(.symbolEffect(.replace))
+            Text(locked ? "Locked" : "Open")
+                .font(.system(size: design.type(12), weight: .black, design: .rounded))
+        }
+        .foregroundStyle(locked ? design.lockedSecondary : design.inkOnSurface(0.55))
+        .padding(.horizontal, design.spacing(12))
+        .frame(height: design.spacing(34))
+        .background(locked ? design.lockedPrimary : design.muted, in: Capsule())
+        .animation(.spring(response: 0.42, dampingFraction: 0.78), value: locked)
+        .accessibilityLabel(locked ? "Apps are locked" : "Apps are open")
     }
 
     private var statusCard: some View {
@@ -208,25 +253,67 @@ struct ContentView: View {
         let accent = design.secondaryFor(locked: locked)
 
         return VStack(spacing: design.spacing(10)) {
-            Text(locked ? "Locked" : "Ready to focus?")
-                .font(.system(size: design.type(30), weight: .black, design: .rounded))
-                .foregroundStyle(model.displayedIsLocked ? design.surface : design.text)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: design.spacing(4)) {
+                Text(statusHeadline)
+                    .font(.system(size: design.type(30), weight: design.headingWeight, design: .rounded))
+                    .foregroundStyle(locked ? design.lockedSecondary : design.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
-            // STRAWBERRY LOTTIE PROTOTYPE. StatusAwareMascot remains in
-            // DesignSystem.swift for a one-line rollback after validation.
+                Text(statusSubhead)
+                    .font(.system(size: design.type(13), weight: .semibold, design: .rounded))
+                    .foregroundStyle((locked ? design.lockedSecondary : design.secondary).opacity(0.72))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
             LottieMascotView(
+                fruit: selectedMascot,
                 state: locked ? .onDuty : .idle,
                 oneShotState: .celebrate,
                 oneShotTrigger: lockAnimationTrigger
             )
-            .frame(width: design.hero(104), height: design.hero(104))
-            .padding(.top, design.spacing(34))
+            .frame(
+                width: design.hero(mascotSize),
+                height: design.hero(mascotSize)
+            )
+            // A soft pool of light so the mascot sits in the card instead of
+            // floating on flat colour. It goes in a background so the glow can
+            // spill past the rig without adding its own height to the card —
+            // and the Lottie rigs bake their own contact shadow, so the ellipse
+            // that used to sit here was stacking two shadows under one pair of
+            // feet.
+            .background {
+                if design.usesCompactStatusCard {
+                    // Drawn into a circle whose radius equals `endRadius`, so
+                    // the glow reaches full transparency exactly at the rim.
+                    // A bare RadialGradient fills its rectangle instead, and
+                    // the four edge midpoints land inside the fade — which
+                    // shows up as a faint square floating on the card.
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [accent.opacity(locked ? 0.22 : 0.18), accent.opacity(0)],
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: design.hero(112)
+                            )
+                        )
+                        .frame(width: design.hero(224), height: design.hero(224))
+                        .allowsHitTesting(false)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, design.spacing(design.usesCompactStatusCard ? 2 : 8))
 
             if locked {
                 HStack(spacing: design.spacing(10)) {
-                    ClockCharacter(size: design.hero(70))
+                    if design.showsSupportingCharacters {
+                        Image("clay_clock")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: design.hero(70), height: design.hero(70))
+                            .accessibilityHidden(true)
+                    }
 
                     HStack(spacing: design.spacing(6)) {
                         Image(systemName: "timer")
@@ -239,34 +326,140 @@ struct ContentView: View {
                     .padding(.vertical, design.spacing(8))
                     .background(accent, in: Capsule())
                 }
+                .frame(maxWidth: .infinity, alignment: design.showsSupportingCharacters ? .leading : .center)
                 .padding(.top, design.spacing(2))
                 .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
         }
-        .padding(design.spacing(18))
+        .padding(design.spacing(design.usesCompactStatusCard ? 18 : 20))
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(base, in: RoundedRectangle(cornerRadius: design.radius(14)))
+        .background(base, in: RoundedRectangle(cornerRadius: design.radius(20)))
         .accessibilityElement(children: .combine)
-        .animation(.spring(response: 0.4, dampingFraction: 0.78), value: locked)
+        .animation(.spring(response: 0.52, dampingFraction: 0.58), value: locked)
+    }
+
+    /// The one control that changes the lock. What it does depends entirely on
+    /// the mode picked during onboarding.
+    @ViewBuilder
+    private var primaryControl: some View {
+        if let remaining = model.unlockCountdown {
+            countdownControl(remaining: remaining)
+        } else if model.lockMode == .pod {
+            HStack(spacing: design.spacing(12)) {
+                Image(systemName: proximity.isNear
+                      ? "sensor.tag.radiowaves.forward.fill"
+                      : "sensor.tag.radiowaves.forward")
+                    .font(.system(size: design.type(16), weight: .bold))
+                    .symbolEffect(.variableColor, isActive: !proximity.isNear)
+                Text(model.primaryActionTitle)
+                    .font(.system(size: design.type(14), weight: .black, design: .rounded))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(model.displayedIsLocked ? design.lockedSecondary : design.secondary)
+            .padding(.horizontal, design.spacing(18))
+            .frame(height: design.spacing(58))
+            .frame(maxWidth: .infinity)
+            .background(
+                design.primaryFor(locked: model.displayedIsLocked),
+                in: RoundedRectangle(cornerRadius: design.radius(8))
+            )
+        } else {
+            Button {
+                model.primaryAction()
+            } label: {
+                Label(model.primaryActionTitle, systemImage: model.primaryActionSymbol)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(PrimaryCTAStyle(
+                tokens: design,
+                isEnabled: model.canToggleLock,
+                lockState: model.displayedIsLocked
+            ))
+            .disabled(!model.canToggleLock)
+        }
+    }
+
+    /// App-only mode's cooling-off period, shown as a filling bar you can bail
+    /// out of. Bailing out is the good ending, so it gets the friendly styling.
+    private func countdownControl(remaining: Int) -> some View {
+        let total = Double(UnlockDelay.seconds)
+        let progress = 1 - (Double(remaining) / total)
+
+        return VStack(spacing: design.spacing(10)) {
+            HStack(spacing: design.spacing(10)) {
+                Image(systemName: "hourglass")
+                    .font(.system(size: design.type(15), weight: .bold))
+                Text("Unlocking in \(remaining)s")
+                    .font(.system(size: design.type(15), weight: .black, design: .rounded))
+                    .contentTransition(.numericText(countsDown: true))
+                Spacer(minLength: 0)
+                Text("Still time to change your mind")
+                    .font(.system(size: design.type(10), weight: .bold, design: .rounded))
+                    .foregroundStyle(design.text.opacity(0.42))
+            }
+            .foregroundStyle(design.text)
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(design.text.opacity(0.10))
+                    Capsule()
+                        .fill(design.signal)
+                        .frame(width: max(6, geo.size.width * progress))
+                }
+            }
+            .frame(height: 8)
+
+            Button {
+                model.cancelUnlockCountdown(userInitiated: true)
+            } label: {
+                Text("Never mind, keep me locked")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(PrimaryCTAStyle(tokens: design, isEnabled: true))
+        }
+        .padding(design.spacing(16))
+        .background(design.surface.opacity(0.94), in: RoundedRectangle(cornerRadius: design.radius(12)))
+        .overlay {
+            RoundedRectangle(cornerRadius: design.radius(12))
+                .stroke(design.signal.opacity(0.35), lineWidth: 1.5)
+        }
+        .animation(.easeInOut(duration: 0.9), value: remaining)
+    }
+
+    private var statusHeadline: String {
+        if model.unlockCountdown != nil { return "Thinking about it…" }
+        if model.displayedIsLocked { return "Locked up" }
+        return model.hasSelection ? "Ready when you are" : "Nothing blocked yet"
+    }
+
+    private var statusSubhead: String {
+        if let remaining = model.unlockCountdown {
+            return "\(remaining) seconds until your apps come back."
+        }
+        if model.displayedIsLocked {
+            switch model.lockMode {
+            case .tag: return "Tap your tag when you're genuinely done."
+            case .pod: return "You're in the pod's room. Walk out to unblock."
+            case .both:
+                return model.isBLEPodNear
+                    ? "Your pod's got you. Leave the room, then tap the tag."
+                    : "Tap your tag when you're genuinely done."
+            case .timer: return "Unlocking costs you thirty seconds."
+            }
+        }
+        if !model.hasSelection { return "Pick the apps stealing your evenings." }
+        switch model.lockMode {
+        case .tag: return "Tap your tag to start a session."
+        case .pod: return "Walk into your pod's room to start blocking."
+        case .both: return "Tap your tag, or just walk into your pod's room."
+        case .timer: return "Lock it whenever you're ready to get going."
+        }
     }
 
     private var appSection: some View {
         VStack(alignment: .leading, spacing: design.spacing(14)) {
-            Button {
-                model.scanTag()
-            } label: {
-                Label(
-                    FocusLockModel.isNFCTestBypassEnabled
-                        ? model.displayedIsLocked ? "Test unlock" : "Test lock"
-                        : model.displayedIsLocked ? "Scan to unlock" : "Scan to lock",
-                    systemImage: FocusLockModel.isNFCTestBypassEnabled
-                        ? "hand.tap.fill"
-                        : "wave.3.right"
-                )
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(PrimaryCTAStyle(tokens: design, isEnabled: model.canScan, lockState: model.displayedIsLocked))
-            .disabled(!model.canScan)
+            primaryControl
+                .padding(.bottom, design.spacing(6))
 
             HStack {
                 Text("Block lists")
@@ -293,8 +486,10 @@ struct ContentView: View {
                                 .font(.system(size: design.type(11), weight: .black, design: .rounded))
                         }
                         .foregroundStyle(design.text.opacity(0.45))
-                        .frame(width: design.hero(116), height: design.hero(164))
-                        .background(design.muted, in: RoundedRectangle(cornerRadius: design.radius(12)))
+                        // Matches the list cards — mismatched widths in one row
+                        // read as an alignment mistake.
+                        .frame(width: design.hero(blockCardWidth), height: design.hero(164))
+                        .background(design.muted.opacity(0.5), in: RoundedRectangle(cornerRadius: design.radius(12)))
                         .overlay {
                             RoundedRectangle(cornerRadius: design.radius(12))
                                 .stroke(
@@ -337,7 +532,9 @@ struct ContentView: View {
                         Image(systemName: "chevron.right")
                     }
                     .font(.system(size: design.type(12), weight: .black, design: .rounded))
-                    .foregroundStyle(design.secondary)
+                    // `secondary` is on-primary ink; over a 55%-alpha wash it
+                    // left the one button that fixes a broken install unreadable.
+                    .foregroundStyle(design.text)
                     .padding(.horizontal, design.spacing(16))
                     .frame(height: design.spacing(48))
                     .background(design.accentBlue.opacity(0.55), in: RoundedRectangle(cornerRadius: design.radius(8)))
@@ -352,9 +549,11 @@ struct ContentView: View {
                     : "exclamationmark.shield.fill"
             )
             .font(.system(size: 12, weight: .bold, design: .rounded))
+            // The granted case used to be drawn in `secondary` — on-primary
+            // ink over the page background, so the confirmation was invisible.
             .foregroundStyle(
                 model.hasScreenTimeAuthorization
-                    ? design.secondary
+                    ? design.inkOnSurface(0.5)
                     : design.signal
             )
         }
@@ -362,9 +561,13 @@ struct ContentView: View {
 
     private func blockProfileIsland(_ profile: BlockProfile, index: Int) -> some View {
         let isActive = profile.id == model.activeProfileID
-        let ink = isActive ? design.surface : design.text
-        // Each list keeps its own distinct fruit, fixed regardless of lock state.
-        let persona = FruitPersona.forBlockList(index)
+        // `secondary`/`surface` are on-primary inks — near-white in every light
+        // scheme — so using them here put the list name at ~1.0:1 against its
+        // own card. Active is signalled by the fill and border instead.
+        let ink = design.text
+        // Each list keeps its own distinct fruit, fixed regardless of lock
+        // state, and never the mascot: that one is the bouncer on the card above.
+        let persona = FruitPersona.forBlockList(index, excluding: selectedMascot)
 
         return Button {
             withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
@@ -372,11 +575,19 @@ struct ContentView: View {
             }
         } label: {
             VStack(spacing: design.spacing(10)) {
-                FruitCharacter(fruit: persona.fruit, personality: persona.personality, size: design.hero(66))
+                if design.showsBlockListMascots {
+                    ClayFruitView(kind: persona.fruit)
+                        .frame(width: design.hero(66), height: design.hero(66))
+                } else {
+                    Image(systemName: isActive ? "checkmark.circle.fill" : "square.stack.3d.up.fill")
+                        .font(.system(size: design.type(30), weight: .semibold))
+                        .foregroundStyle(isActive ? design.primary : design.text.opacity(0.36))
+                        .frame(width: design.hero(66), height: design.hero(66))
+                }
 
                 VStack(spacing: design.spacing(3)) {
                     Text(profile.name)
-                        .font(.system(size: design.type(14), weight: .black, design: .rounded))
+                        .font(.system(size: design.type(14), weight: design.headingWeight, design: .rounded))
                         .lineLimit(1)
 
                     Text("\(profile.itemCount) apps")
@@ -393,14 +604,14 @@ struct ContentView: View {
             .foregroundStyle(ink)
             .padding(.vertical, design.spacing(16))
             .padding(.horizontal, design.spacing(12))
-            .frame(width: design.hero(136), height: design.hero(164))
+            .frame(width: design.hero(blockCardWidth), height: design.hero(164))
             .background(
-                isActive ? design.secondary : design.muted,
+                isActive ? design.surface : design.muted,
                 in: RoundedRectangle(cornerRadius: design.radius(12))
             )
             .overlay {
                 RoundedRectangle(cornerRadius: design.radius(12))
-                    .stroke(isActive ? design.primary.opacity(0.5) : design.text.opacity(0.06), lineWidth: isActive ? 2 : 1)
+                    .stroke(isActive ? design.primary : design.text.opacity(0.06), lineWidth: isActive ? 2.5 : 1)
             }
         }
         .buttonStyle(PressButtonStyle())
@@ -421,7 +632,9 @@ struct ContentView: View {
 
     private var actionSection: some View {
         VStack(spacing: design.spacing(12)) {
-            if model.isLocked {
+            // Emergency unlocks only exist for the modes you can genuinely get
+            // stuck in. App-only mode already has a thirty second exit.
+            if model.isLocked && model.lockMode != .timer {
                 Button {
                     isConfirmingEmergencyUnlock = true
                 } label: {
@@ -444,13 +657,14 @@ struct ContentView: View {
                 .disabled(!model.canUseEmergencyUnlock)
             }
 
-            if !FocusLockModel.isNFCTestBypassEnabled {
+            if (model.lockMode == .tag || model.lockMode == .both)
+                && !FocusLockModel.isNFCTestBypassEnabled {
                 Button {
                     model.pairTag()
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "plus.circle.fill")
-                        Text(model.hasPairedTag ? "Pair a different tag" : "Pair NFC tag")
+                        Text(model.hasPairedTag ? "Pair a different tag" : "Pair your NFC tag")
                     }
                     .font(.system(size: design.type(13), weight: .black, design: .rounded))
                     .foregroundStyle(design.text.opacity(0.58))
@@ -459,7 +673,33 @@ struct ContentView: View {
                 .buttonStyle(.plain)
                 .disabled(!model.hasSelection)
             }
+
+            modeBadge
         }
+    }
+
+    /// A quiet reminder of the deal you signed up for. Deliberately not a
+    /// button — the mode is permanent.
+    private var modeBadge: some View {
+        HStack(spacing: design.spacing(10)) {
+            Image(systemName: model.lockMode.symbol)
+                .font(.system(size: design.type(12), weight: .bold))
+                .foregroundStyle(design.primary)
+                .frame(width: 22)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Locking with \(model.lockMode.title)")
+                    .font(.system(size: design.type(12), weight: .black, design: .rounded))
+                    .foregroundStyle(design.text.opacity(0.7))
+                Text("Chosen at setup. Permanent.")
+                    .font(.system(size: design.type(10), weight: .semibold, design: .rounded))
+                    .foregroundStyle(design.text.opacity(0.4))
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, design.spacing(14))
+        .padding(.vertical, design.spacing(12))
+        .background(design.muted.opacity(0.7), in: RoundedRectangle(cornerRadius: design.radius(8)))
     }
 
     private var proximitySection: some View {
@@ -476,7 +716,15 @@ struct ContentView: View {
             VStack(spacing: design.spacing(14)) {
                 if proximity.pairedPodSnapshots.isEmpty {
                     HStack(spacing: design.spacing(14)) {
-                        FruitCharacter(fruit: .peach, personality: .sleepy, size: design.hero(60))
+                        // Was a hardcoded peach, which put a second copy of the
+                        // mascot on screen for anyone whose bouncer is a peach.
+                        // An empty state doesn't need a character anyway — the
+                        // one on the card above is the character.
+                        Image(systemName: "sensor.tag.radiowaves.forward")
+                            .font(.system(size: design.type(24), weight: .bold))
+                            .foregroundStyle(design.primary)
+                            .symbolEffect(.variableColor)
+                            .frame(width: design.hero(60), height: design.hero(60))
 
                         Text("No pods paired yet.\nPower one on nearby.")
                             .font(.system(size: design.type(12), weight: .semibold, design: .rounded))
@@ -568,7 +816,9 @@ struct ContentView: View {
                 if let rssi = pod.smoothedRSSI {
                     Text("\(Int(rssi.rounded())) dBm")
                         .font(.system(size: design.type(12), weight: .black, design: .monospaced))
-                        .foregroundStyle(pod.isNear ? design.secondary : design.text.opacity(0.5))
+                        // In range used to draw in `secondary`, which is
+                        // on-primary ink — invisible on the panel behind it.
+                        .foregroundStyle(pod.isNear ? design.primary : design.inkOnSurface(0.5))
                 }
                 HStack(spacing: design.spacing(10)) {
                     Button(pod.boundaryRSSI == nil ? "Calibrate" : "Recalibrate") {
@@ -611,6 +861,314 @@ struct ContentView: View {
         .font(.system(size: design.type(12), weight: .semibold, design: .rounded))
         .foregroundStyle(design.text.opacity(0.36))
         .multilineTextAlignment(.center)
+    }
+}
+
+private struct AppearanceSettingsView: View {
+    @Binding var selectedMascotRawValue: String
+    @Binding var selectedSchemeRawValue: String
+    let lockMode: LockMode
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.designTokens) private var design
+    @EnvironmentObject private var designSettings: DesignSettings
+
+    private let mascotColumns = Array(
+        repeating: GridItem(.flexible(), spacing: 10),
+        count: 4
+    )
+    private let schemeColumns = Array(
+        repeating: GridItem(.flexible(), spacing: 12),
+        count: 2
+    )
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: design.spacing(28)) {
+                    howItWorksSection
+                    schemeSection
+                    interfaceSection
+                    mascotSection
+                }
+                .padding(.horizontal, design.spacing(20))
+                .padding(.vertical, design.spacing(22))
+            }
+            .background(PlayfulBackdrop(tokens: design))
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .fontWeight(.bold)
+                        .foregroundStyle(design.primary)
+                }
+            }
+        }
+    }
+
+    /// A permanent reminder of the deal, plus the ground rules. There is no
+    /// control here on purpose — the mode cannot be changed after setup.
+    private var howItWorksSection: some View {
+        VStack(alignment: .leading, spacing: design.spacing(14)) {
+            sectionTitle("How Broke works", subtitle: "Your setup, and what it means.")
+
+            VStack(alignment: .leading, spacing: design.spacing(14)) {
+                HStack(spacing: design.spacing(13)) {
+                    Image(systemName: lockMode.symbol)
+                        .font(.system(size: design.type(18), weight: .bold))
+                        .foregroundStyle(design.secondary)
+                        .frame(width: 46, height: 46)
+                        .background(design.primary, in: Circle())
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(lockMode.title)
+                            .font(.system(size: design.type(17), weight: .black, design: .rounded))
+                            .foregroundStyle(design.text)
+                        Text(lockMode.tagline)
+                            .font(.system(size: design.type(11), weight: .black, design: .rounded))
+                            .foregroundStyle(design.primary)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: design.type(12), weight: .bold))
+                        .foregroundStyle(design.text.opacity(0.3))
+                }
+
+                Text(lockMode.blurb)
+                    .font(.system(size: design.type(13), weight: .semibold, design: .rounded))
+                    .foregroundStyle(design.text.opacity(0.52))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .lineSpacing(3)
+
+                Divider().overlay(design.text.opacity(0.08))
+
+                Text("This was a one-time choice, so it can't be changed here. If you genuinely need a different setup, delete Broke and start again — and be honest with yourself about why.")
+                    .font(.system(size: design.type(11), weight: .semibold, design: .rounded))
+                    .foregroundStyle(design.text.opacity(0.4))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .lineSpacing(2)
+            }
+            .padding(design.spacing(16))
+            .background(design.surface.opacity(0.9), in: RoundedRectangle(cornerRadius: design.radius(14)))
+            .overlay {
+                RoundedRectangle(cornerRadius: design.radius(14))
+                    .stroke(design.text.opacity(0.06), lineWidth: 1)
+            }
+        }
+    }
+
+    private var mascotSection: some View {
+        VStack(alignment: .leading, spacing: design.spacing(14)) {
+            sectionTitle("Mascot", subtitle: "Pick a fruit for your focus card.")
+
+            LazyVGrid(columns: mascotColumns, spacing: design.spacing(14)) {
+                ForEach(FruitKind.allCases) { fruit in
+                    let isSelected = fruit.rawValue == selectedMascotRawValue
+
+                    Button {
+                        selectedMascotRawValue = fruit.rawValue
+                    } label: {
+                        VStack(spacing: design.spacing(6)) {
+                            // Static clay art, matching the onboarding picker.
+                            // These were live Lottie rigs — eight of them, all
+                            // looping at once on top of the home screen's rigs
+                            // still playing behind the sheet. The animation is
+                            // the payoff for choosing, not the preview of it.
+                            //
+                            // The ZStack is centred so the fruit sits in the
+                            // middle of its swatch; only the badge is pinned to
+                            // the corner, via an overlay on the tile itself.
+                            ZStack {
+                                RoundedRectangle(cornerRadius: design.radius(10))
+                                    .fill(isSelected ? design.primary.opacity(0.14) : design.muted.opacity(0.72))
+                                    .frame(height: design.hero(62))
+                                    .overlay(alignment: .topTrailing) {
+                                        if isSelected {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .font(.system(size: design.type(16), weight: .bold))
+                                                .foregroundStyle(design.primary)
+                                                .background(design.surface, in: Circle())
+                                                .offset(x: 4, y: -4)
+                                        }
+                                    }
+
+                                Image(fruit.clayAssetName)
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(height: design.hero(56))
+                                    .padding(.horizontal, 4)
+                            }
+
+                            Text(fruit.name)
+                                .font(.system(size: design.type(10), weight: .bold, design: .rounded))
+                                .foregroundStyle(design.text)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.72)
+                        }
+                    }
+                    .buttonStyle(PressButtonStyle())
+                    .accessibilityLabel("Use \(fruit.name) mascot")
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
+                }
+            }
+            .padding(design.spacing(14))
+            .background(design.surface.opacity(0.86), in: RoundedRectangle(cornerRadius: design.radius(14)))
+        }
+    }
+
+    private var schemeSection: some View {
+        VStack(alignment: .leading, spacing: design.spacing(14)) {
+            sectionTitle("Color scheme", subtitle: "Set the palette across Broke.")
+
+            LazyVGrid(columns: schemeColumns, spacing: design.spacing(12)) {
+                ForEach(DesignScheme.allCases) { scheme in
+                    let tokens = scheme.tokens
+                    let isSelected = scheme.rawValue == selectedSchemeRawValue
+
+                    Button {
+                        selectedSchemeRawValue = scheme.rawValue
+                    } label: {
+                        VStack(alignment: .leading, spacing: design.spacing(10)) {
+                            HStack(spacing: 5) {
+                                Circle().fill(tokens.primary)
+                                Circle().fill(tokens.accentPink)
+                                Circle().fill(tokens.accentBlue)
+                            }
+                            .frame(height: 30)
+
+                            HStack(spacing: 6) {
+                                Text(scheme.name)
+                                    .font(.system(size: design.type(13), weight: .black, design: .rounded))
+                                    .foregroundStyle(tokens.text)
+                                Spacer(minLength: 0)
+                                if isSelected {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(tokens.primary)
+                                }
+                            }
+                        }
+                        .padding(design.spacing(12))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(tokens.surface, in: RoundedRectangle(cornerRadius: design.radius(11)))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: design.radius(11))
+                                .stroke(
+                                    isSelected ? design.primary : tokens.text.opacity(0.12),
+                                    lineWidth: isSelected ? 2.5 : 1
+                                )
+                        }
+                    }
+                    .buttonStyle(PressButtonStyle())
+                    .accessibilityLabel("Use \(scheme.name) color scheme")
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
+                }
+            }
+        }
+    }
+
+    private var interfaceSection: some View {
+        VStack(alignment: .leading, spacing: design.spacing(14)) {
+            sectionTitle("Interface", subtitle: "Tune the shape, spacing, and personality.")
+
+            VStack(spacing: 0) {
+                choiceRow(
+                    title: "Card corners",
+                    symbol: "square.on.square",
+                    selection: $designSettings.cardCornerStyle
+                )
+                Divider().overlay(design.text.opacity(0.08))
+                choiceRow(
+                    title: "Layout density",
+                    symbol: "arrow.up.and.down.text.horizontal",
+                    selection: $designSettings.layoutDensity
+                )
+                Divider().overlay(design.text.opacity(0.08))
+                settingToggle(
+                    title: "Soft blobs",
+                    subtitle: "Decorative background shapes",
+                    symbol: "circle.hexagongrid.fill",
+                    isOn: $designSettings.showsSoftBlobs
+                )
+                Divider().overlay(design.text.opacity(0.08))
+                settingToggle(
+                    title: "Block-list mascots",
+                    subtitle: "Show fruit on each list card",
+                    symbol: "face.smiling.fill",
+                    isOn: $designSettings.showsBlockListMascots
+                )
+                Divider().overlay(design.text.opacity(0.08))
+                settingToggle(
+                    title: "Bold headings",
+                    subtitle: "Use extra-heavy title type",
+                    symbol: "bold",
+                    isOn: $designSettings.usesBoldHeadings
+                )
+            }
+            .padding(.horizontal, design.spacing(14))
+            .background(design.surface.opacity(0.9), in: RoundedRectangle(cornerRadius: design.radius(14)))
+            .overlay {
+                RoundedRectangle(cornerRadius: design.radius(14))
+                    .stroke(design.text.opacity(0.06), lineWidth: 1)
+            }
+        }
+    }
+
+    private func choiceRow<Option>(
+        title: String,
+        symbol: String,
+        selection: Binding<Option>
+    ) -> some View where Option: RawRepresentable & CaseIterable & Identifiable & Hashable, Option.RawValue == String {
+        VStack(alignment: .leading, spacing: design.spacing(10)) {
+            Label(title, systemImage: symbol)
+                .font(.system(size: design.type(13), weight: design.headingWeight, design: .rounded))
+                .foregroundStyle(design.text)
+
+            Picker(title, selection: selection) {
+                ForEach(Array(Option.allCases)) { option in
+                    Text(option.rawValue.capitalized).tag(option)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        }
+        .padding(.vertical, design.spacing(14))
+    }
+
+    private func settingToggle(
+        title: String,
+        subtitle: String,
+        symbol: String,
+        isOn: Binding<Bool>
+    ) -> some View {
+        Toggle(isOn: isOn) {
+            HStack(spacing: design.spacing(11)) {
+                Image(systemName: symbol)
+                    .font(.system(size: design.type(13), weight: .bold))
+                    .foregroundStyle(design.primary)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: design.type(13), weight: design.headingWeight, design: .rounded))
+                        .foregroundStyle(design.text)
+                    Text(subtitle)
+                        .font(.system(size: design.type(10), weight: .semibold, design: .rounded))
+                        .foregroundStyle(design.text.opacity(0.46))
+                }
+            }
+        }
+        .tint(design.primary)
+        .padding(.vertical, design.spacing(12))
+    }
+
+    private func sectionTitle(_ title: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: design.type(18), weight: design.headingWeight, design: .rounded))
+                .foregroundStyle(design.text)
+            Text(subtitle)
+                .font(.system(size: design.type(12), weight: .semibold, design: .rounded))
+                .foregroundStyle(design.text.opacity(0.48))
+        }
     }
 }
 
@@ -741,7 +1299,9 @@ private struct BoundaryCalibrationSheet: View {
     }
 
     private var iconColor: Color {
-        result?.succeeded == false ? design.signal : design.secondary
+        // Was `secondary` — on-primary ink drawn straight onto the sheet's
+        // `surface`, so the icon and the live sample count were invisible.
+        result?.succeeded == false ? design.signal : design.primary
     }
 
     private func primaryAction() {
@@ -865,7 +1425,7 @@ private struct LockStateBanner: View {
 
 private extension View {
     func sectionLabel(tokens: DesignTokens) -> some View {
-        font(.system(size: tokens.type(13), weight: .black, design: .rounded))
+        font(.system(size: tokens.type(13), weight: tokens.headingWeight, design: .rounded))
             .foregroundStyle(tokens.text.opacity(0.72))
     }
 

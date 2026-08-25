@@ -14,10 +14,15 @@ struct BrokeApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var coordinator = AppCoordinator()
     @StateObject private var designSettings = DesignSettings()
+    @AppStorage("brokeHasOnboarded") private var hasOnboarded = false
 #if DEBUG
     private let isMascotDemoEnabled = ProcessInfo.processInfo.environment["MASCOT_DEMO"] == "1"
     private let mascotPreviewState = ProcessInfo.processInfo.environment["MASCOT_PREVIEW"]
         .flatMap(MascotState.init(rawValue:))
+    // Deterministic single-fruit preview for QA (bypasses the mascot picker):
+    // launch with SIMCTL_CHILD_MASCOT_FRUIT=<fruit> to render that fruit's idle rig.
+    private let mascotFruitPreview = ProcessInfo.processInfo.environment["MASCOT_FRUIT"]
+        .flatMap(FruitKind.init(rawValue:))
 #endif
 
     var body: some Scene {
@@ -27,6 +32,18 @@ struct BrokeApp: App {
             .onOpenURL { url in
                 coordinator.model.handleIncomingTagURL(url)
             }
+#if DEV_BUILD
+            // The badge doubles as the dev panel's entry point, so the QA hooks
+            // are reachable when the app is launched by tapping its icon — the
+            // environment variables only arrive from the simulator or Xcode.
+            .devTools(
+                model: coordinator.model,
+                proximity: coordinator.proximity,
+                designSettings: designSettings
+            )
+#else
+            .devBuildBadge()
+#endif
         }
     }
 
@@ -38,14 +55,55 @@ struct BrokeApp: App {
                 .task {
                     await runMascotDemo()
                 }
+        } else if let mascotFruitPreview {
+            ZStack {
+                Color(white: 0.93).ignoresSafeArea()
+                LottieMascotView(
+                    fruit: mascotFruitPreview,
+                    state: mascotPreviewState ?? .idle
+                )
+                .frame(width: 320, height: 320)
+            }
         } else if let mascotPreviewState {
             MascotPreviewView(state: mascotPreviewState)
         } else {
-            contentView
+            gatedContent
         }
 #else
-        contentView
+        gatedContent
 #endif
+    }
+
+    /// Onboarding owns the first launch; after that it never appears again.
+    @ViewBuilder
+    private var gatedContent: some View {
+#if DEBUG
+        let env = ProcessInfo.processInfo.environment
+        if env["ONBOARD_STEP"] != nil {
+            onboardingView
+        } else if hasOnboarded || env["FORCE_MODE"] != nil {
+            contentView
+        } else {
+            onboardingView
+        }
+#else
+        if hasOnboarded {
+            contentView
+        } else {
+            onboardingView
+        }
+#endif
+    }
+
+    private var onboardingView: some View {
+        OnboardingView(
+            model: coordinator.model,
+            proximity: coordinator.proximity
+        ) {
+            withAnimation(.easeInOut(duration: 0.35)) { hasOnboarded = true }
+        }
+        .environment(\.designTokens, designSettings.tokens)
+        .transition(.opacity)
     }
 
     private var contentView: some View {
@@ -53,6 +111,20 @@ struct BrokeApp: App {
             model: coordinator.model,
             proximity: coordinator.proximity
         )
+#if DEBUG
+        .task {
+            // QA hooks so the simulator can reach states that normally need a
+            // tag tap or a 30 second wait.
+            let env = ProcessInfo.processInfo.environment
+            guard env["DEBUG_LOCKED"] == "1" || env["DEBUG_COUNTDOWN"] == "1" else { return }
+            try? await Task.sleep(for: .milliseconds(400))
+            coordinator.model.debugSetLocked(true)
+            if env["DEBUG_COUNTDOWN"] == "1" {
+                try? await Task.sleep(for: .milliseconds(900))
+                coordinator.model.beginUnlockCountdown()
+            }
+        }
+#endif
     }
 
 #if DEBUG

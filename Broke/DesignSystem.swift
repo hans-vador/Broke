@@ -3,78 +3,165 @@ import SwiftUI
 import UIKit
 
 struct DesignTokens: Equatable {
-    // Sunset — the production default palette.
-    var primaryRed = 1.0
-    var primaryGreen = 0.72
-    var primaryBlue = 0.3
+    // Strawberry — the production default palette.
+    var primaryRed = 0.965
+    var primaryGreen = 0.282
+    var primaryBlue = 0.369
 
-    var secondaryRed = 0.78
-    var secondaryGreen = 0.25
-    var secondaryBlue = 0.36
+    var secondaryRed = 1.0
+    var secondaryGreen = 0.969
+    var secondaryBlue = 0.941
 
-    var lockedPrimaryRed = 1.0
-    var lockedPrimaryGreen = 0.467
-    var lockedPrimaryBlue = 0.51
+    var lockedPrimaryRed = 0.886
+    var lockedPrimaryGreen = 0.2
+    var lockedPrimaryBlue = 0.314
 
     var lockedSecondaryRed = 1.0
     var lockedSecondaryGreen = 1.0
     var lockedSecondaryBlue = 1.0
 
     var accentPinkRed = 1.0
-    var accentPinkGreen = 0.62
-    var accentPinkBlue = 0.6
+    var accentPinkGreen = 0.624
+    var accentPinkBlue = 0.69
 
-    var accentBlueRed = 0.99
-    var accentBlueGreen = 0.85
-    var accentBlueBlue = 0.6
+    var accentBlueRed = 0.404
+    var accentBlueGreen = 0.761
+    var accentBlueBlue = 0.29
 
-    var surfaceRed = 1.0
-    var surfaceGreen = 1.0
-    var surfaceBlue = 1.0
+    var surfaceRed = 0.984
+    var surfaceGreen = 0.953
+    var surfaceBlue = 0.925
 
-    var textRed = 0.071
-    var textGreen = 0.071
-    var textBlue = 0.071
+    var textRed = 0.141
+    var textGreen = 0.063
+    var textBlue = 0.086
 
-    var mutedRed = 0.949
-    var mutedGreen = 0.949
-    var mutedBlue = 0.949
+    var mutedRed = 0.953
+    var mutedGreen = 0.906
+    var mutedBlue = 0.878
 
     var signalRed = 1.0
-    var signalGreen = 0.42
-    var signalBlue = 0.29
+    var signalGreen = 0.353
+    var signalBlue = 0.275
 
     var spacingScale = 1.0
     var radiusScale = 1.65
     var typeScale = 1.0
-    var heroScale = 1.30
+    var heroScale = 1.34
     var shadowScale = 0.85
+
+    // User-facing appearance preferences. Keeping these beside the visual
+    // tokens makes every view respond through the same environment value.
+    var showsSoftBlobs = true
+    var showsBlockListMascots = true
+    var usesBoldHeadings = true
+
+    // Dev-build design switches. These ship with the values below fixed; the
+    // toggles that flip them live in the dev panel and compile out of the
+    // shipped app. They exist so a look can be compared against the old one
+    // on a real device without a rebuild.
+
+    /// The clay padlock in the header and the clay clock on the locked card.
+    /// Off by default: your fruit is the bouncer, and it reads as the hero
+    /// only when it is the sole character on the screen.
+    var showsSupportingCharacters = false
+    /// Tightens the status card around its contents and lights the mascot
+    /// with a soft spotlight instead of letting it float on flat colour.
+    var usesCompactStatusCard = true
 
     static let production = DesignTokens()
 
-    /// Original lime + navy palette, available as the Citrus preset.
-    static let citrus: DesignTokens = {
-        var tokens = DesignTokens()
-        tokens.primaryRed = 0.82
-        tokens.primaryGreen = 1.0
-        tokens.primaryBlue = 0.4
-        tokens.secondaryRed = 0.102
-        tokens.secondaryGreen = 0.227
-        tokens.secondaryBlue = 0.62
-        tokens.lockedPrimaryRed = 0.102
-        tokens.lockedPrimaryGreen = 0.227
-        tokens.lockedPrimaryBlue = 0.62
-        tokens.lockedSecondaryRed = 0.82
-        tokens.lockedSecondaryGreen = 1.0
-        tokens.lockedSecondaryBlue = 0.4
-        tokens.accentPinkRed = 1.0
-        tokens.accentPinkGreen = 0.6
-        tokens.accentPinkBlue = 0.8
-        tokens.accentBlueRed = 0.651
-        tokens.accentBlueGreen = 0.757
-        tokens.accentBlueBlue = 1.0
-        return tokens
-    }()
+    static let citrus = palette(
+        primary: 0xFF9F1C,
+        lockedPrimary: 0xF4791F,
+        accentPink: 0xFFD166,
+        accentBlue: 0x8BC34A,
+        surface: 0xFEF6EA,
+        signal: 0xFF7A1A
+    )
+
+    static let sunset = palette(
+        primary: 0xF26B5B,
+        secondary: 0xFFF7EE,
+        lockedPrimary: 0xD94B55,
+        lockedSecondary: 0xFFFFFF,
+        accentPink: 0xF7A8A0,
+        accentBlue: 0xF2B45B,
+        surface: 0xFFF1E6,
+        text: 0x3B1F2B,
+        muted: 0xF8DDCF,
+        signal: 0xD94747
+    )
+
+    static let blueberry = palette(
+        primary: 0x5B6EE8,
+        lockedPrimary: 0x3F4FC7,
+        accentPink: 0x9FB0FF,
+        accentBlue: 0x6FD0E8,
+        surface: 0xF2F3FC,
+        signal: 0x5B6EE8
+    )
+
+    static let grape = palette(
+        primary: 0x8E5BE8,
+        lockedPrimary: 0x6E3FC7,
+        accentPink: 0xC9A9FF,
+        accentBlue: 0xB58BF0,
+        surface: 0xF6F1FE,
+        signal: 0x8E5BE8
+    )
+
+    static let matcha = palette(
+        primary: 0x668A4C,
+        secondary: 0xFFFDF4,
+        lockedPrimary: 0x496C3B,
+        lockedSecondary: 0xFFFFFF,
+        accentPink: 0xE7A6A1,
+        accentBlue: 0xA8C98A,
+        surface: 0xF3F6E8,
+        text: 0x22301F,
+        muted: 0xDFE8D0,
+        signal: 0xB94E4E
+    )
+
+    static let bubblegum = palette(
+        primary: 0xE7559A,
+        secondary: 0xFFFFFF,
+        lockedPrimary: 0xC63E7D,
+        lockedSecondary: 0xFFFFFF,
+        accentPink: 0xF6A7CE,
+        accentBlue: 0x8CCCF4,
+        surface: 0xFFF2F8,
+        text: 0x3B1930,
+        muted: 0xF7DDEA,
+        signal: 0xD93F62
+    )
+
+    static let midnight = palette(
+        primary: 0x7C83FF,
+        secondary: 0xF7F5FF,
+        lockedPrimary: 0xA45DE8,
+        lockedSecondary: 0xFFFFFF,
+        accentPink: 0xE07AB5,
+        accentBlue: 0x55C7D9,
+        surface: 0x17182B,
+        text: 0xF3F1FF,
+        muted: 0x292B45,
+        signal: 0xFF7A86
+    )
+
+    static let mono = palette(
+        primary: 0x343434,
+        secondary: 0xFFFFFF,
+        lockedPrimary: 0x111111,
+        lockedSecondary: 0xFFFFFF,
+        accentPink: 0xB8B8B8,
+        accentBlue: 0x767676,
+        surface: 0xF7F7F5,
+        text: 0x1C1C1C,
+        muted: 0xE7E7E3,
+        signal: 0xB43C3C
+    )
 
     var primary: Color { rgb(primaryRed, primaryGreen, primaryBlue) }
     var secondary: Color { rgb(secondaryRed, secondaryGreen, secondaryBlue) }
@@ -97,6 +184,13 @@ struct DesignTokens: Equatable {
     /// Secondary color for the current lock state.
     func secondaryFor(locked: Bool) -> Color { locked ? lockedSecondary : secondary }
 
+    /// Readable ink for anything sitting on `surface` or `muted`.
+    ///
+    /// `secondary` is *on-primary* ink — near-white in every light scheme —
+    /// so using it over a pale background makes the text vanish. Text that is
+    /// not on a `primary` fill should come from here instead.
+    func inkOnSurface(_ opacity: Double = 1) -> Color { text.opacity(opacity) }
+
     func cardAccent(_ index: Int) -> Color {
         switch index % 3 {
         case 0: primary
@@ -110,27 +204,190 @@ struct DesignTokens: Equatable {
     func type(_ value: CGFloat) -> CGFloat { value * CGFloat(typeScale) }
     func hero(_ value: CGFloat) -> CGFloat { value * CGFloat(heroScale) }
     func shadow(_ value: CGFloat) -> CGFloat { value * CGFloat(shadowScale) }
+    var headingWeight: Font.Weight { usesBoldHeadings ? .black : .semibold }
 
     private func rgb(_ red: Double, _ green: Double, _ blue: Double) -> Color {
         Color(red: red, green: green, blue: blue)
     }
+
+    private static func palette(
+        primary: Int,
+        secondary: Int = 0xFFF7F0,
+        lockedPrimary: Int,
+        lockedSecondary: Int = 0xFFFFFF,
+        accentPink: Int,
+        accentBlue: Int,
+        surface: Int,
+        text: Int = 0x241016,
+        muted: Int = 0xF3E7DF,
+        signal: Int
+    ) -> DesignTokens {
+        var tokens = DesignTokens()
+        let primaryRGB = rgbComponents(primary)
+        tokens.primaryRed = primaryRGB.0; tokens.primaryGreen = primaryRGB.1; tokens.primaryBlue = primaryRGB.2
+        let secondaryRGB = rgbComponents(secondary)
+        tokens.secondaryRed = secondaryRGB.0; tokens.secondaryGreen = secondaryRGB.1; tokens.secondaryBlue = secondaryRGB.2
+        let lockedPrimaryRGB = rgbComponents(lockedPrimary)
+        tokens.lockedPrimaryRed = lockedPrimaryRGB.0; tokens.lockedPrimaryGreen = lockedPrimaryRGB.1; tokens.lockedPrimaryBlue = lockedPrimaryRGB.2
+        let lockedSecondaryRGB = rgbComponents(lockedSecondary)
+        tokens.lockedSecondaryRed = lockedSecondaryRGB.0; tokens.lockedSecondaryGreen = lockedSecondaryRGB.1; tokens.lockedSecondaryBlue = lockedSecondaryRGB.2
+        let accentPinkRGB = rgbComponents(accentPink)
+        tokens.accentPinkRed = accentPinkRGB.0; tokens.accentPinkGreen = accentPinkRGB.1; tokens.accentPinkBlue = accentPinkRGB.2
+        let accentBlueRGB = rgbComponents(accentBlue)
+        tokens.accentBlueRed = accentBlueRGB.0; tokens.accentBlueGreen = accentBlueRGB.1; tokens.accentBlueBlue = accentBlueRGB.2
+        let surfaceRGB = rgbComponents(surface)
+        tokens.surfaceRed = surfaceRGB.0; tokens.surfaceGreen = surfaceRGB.1; tokens.surfaceBlue = surfaceRGB.2
+        let textRGB = rgbComponents(text)
+        tokens.textRed = textRGB.0; tokens.textGreen = textRGB.1; tokens.textBlue = textRGB.2
+        let mutedRGB = rgbComponents(muted)
+        tokens.mutedRed = mutedRGB.0; tokens.mutedGreen = mutedRGB.1; tokens.mutedBlue = mutedRGB.2
+        let signalRGB = rgbComponents(signal)
+        tokens.signalRed = signalRGB.0; tokens.signalGreen = signalRGB.1; tokens.signalBlue = signalRGB.2
+        return tokens
+    }
+
+    private static func rgbComponents(_ hex: Int) -> (Double, Double, Double) {
+        (
+            Double((hex >> 16) & 0xFF) / 255,
+            Double((hex >> 8) & 0xFF) / 255,
+            Double(hex & 0xFF) / 255
+        )
+    }
 }
 
 struct DesignPreset: Identifiable {
-    let id = UUID()
+    var id: String { name }
     var name: String
     var tokens: DesignTokens
 }
 
+enum DesignScheme: String, CaseIterable, Identifiable {
+    case strawberry
+    case citrus
+    case sunset
+    case blueberry
+    case grape
+    case matcha
+    case bubblegum
+    case midnight
+    case mono
+
+    var id: String { rawValue }
+
+    var name: String {
+        self == .grape ? "Grape Soda" : rawValue.capitalized
+    }
+
+    var tokens: DesignTokens {
+        switch self {
+        case .strawberry: .production
+        case .citrus: .citrus
+        case .sunset: .sunset
+        case .blueberry: .blueberry
+        case .grape: .grape
+        case .matcha: .matcha
+        case .bubblegum: .bubblegum
+        case .midnight: .midnight
+        case .mono: .mono
+        }
+    }
+}
+
+enum CardCornerStyle: String, CaseIterable, Identifiable {
+    case rounded, sharp
+    var id: String { rawValue }
+    var name: String { rawValue.capitalized }
+}
+
+enum LayoutDensity: String, CaseIterable, Identifiable {
+    case cozy, compact
+    var id: String { rawValue }
+    var name: String { rawValue.capitalized }
+}
+
+enum AppPreferenceKey {
+    static let selectedMascot = "selectedMascot"
+    static let selectedScheme = "selectedScheme"
+    static let cardCornerStyle = "cardCornerStyle"
+    static let layoutDensity = "layoutDensity"
+    static let showsSoftBlobs = "showsSoftBlobs"
+    static let showsBlockListMascots = "showsBlockListMascots"
+    static let usesBoldHeadings = "usesBoldHeadings"
+    static let showsSupportingCharacters = "showsSupportingCharacters"
+    static let usesCompactStatusCard = "usesCompactStatusCard"
+}
+
 final class DesignSettings: ObservableObject {
-    @Published var tokens = DesignTokens.production
+    @Published var tokens: DesignTokens
+
+    @Published var cardCornerStyle: CardCornerStyle {
+        didSet { persistAndRefresh() }
+    }
+    @Published var layoutDensity: LayoutDensity {
+        didSet { persistAndRefresh() }
+    }
+    @Published var showsSoftBlobs: Bool {
+        didSet { persistAndRefresh() }
+    }
+    @Published var showsBlockListMascots: Bool {
+        didSet { persistAndRefresh() }
+    }
+    @Published var usesBoldHeadings: Bool {
+        didSet { persistAndRefresh() }
+    }
+    @Published var showsSupportingCharacters: Bool {
+        didSet { persistAndRefresh() }
+    }
+    @Published var usesCompactStatusCard: Bool {
+        didSet { persistAndRefresh() }
+    }
+
+    private var selectedScheme: DesignScheme
+    private var isInitializing = true
+
+    init() {
+        let defaults = UserDefaults.standard
+        let savedValue = defaults.string(forKey: AppPreferenceKey.selectedScheme)
+        let scheme = savedValue.flatMap(DesignScheme.init(rawValue:)) ?? .strawberry
+        selectedScheme = scheme
+        cardCornerStyle = defaults.string(forKey: AppPreferenceKey.cardCornerStyle)
+            .flatMap(CardCornerStyle.init(rawValue:)) ?? .rounded
+        layoutDensity = defaults.string(forKey: AppPreferenceKey.layoutDensity)
+            .flatMap(LayoutDensity.init(rawValue:)) ?? .cozy
+        showsSoftBlobs = defaults.object(forKey: AppPreferenceKey.showsSoftBlobs) as? Bool ?? true
+        showsBlockListMascots = defaults.object(forKey: AppPreferenceKey.showsBlockListMascots) as? Bool ?? true
+        usesBoldHeadings = defaults.object(forKey: AppPreferenceKey.usesBoldHeadings) as? Bool ?? true
+        // Shipped builds never write these — the panel that flips them is dev
+        // only — so they always fall through to the defaults the app ships.
+        showsSupportingCharacters = defaults.object(forKey: AppPreferenceKey.showsSupportingCharacters) as? Bool
+            ?? DesignTokens.production.showsSupportingCharacters
+        usesCompactStatusCard = defaults.object(forKey: AppPreferenceKey.usesCompactStatusCard) as? Bool
+            ?? DesignTokens.production.usesCompactStatusCard
+        tokens = scheme.tokens
+        isInitializing = false
+        refreshTokens()
+    }
 
     func reset() {
-        tokens = .production
+        selectedScheme = .strawberry
+        cardCornerStyle = .rounded
+        layoutDensity = .cozy
+        showsSoftBlobs = true
+        showsBlockListMascots = true
+        usesBoldHeadings = true
+        showsSupportingCharacters = DesignTokens.production.showsSupportingCharacters
+        usesCompactStatusCard = DesignTokens.production.usesCompactStatusCard
+        UserDefaults.standard.set(DesignScheme.strawberry.rawValue, forKey: AppPreferenceKey.selectedScheme)
+        refreshTokens()
     }
 
     func apply(_ preset: DesignPreset) {
         tokens = preset.tokens
+    }
+
+    func apply(_ scheme: DesignScheme) {
+        selectedScheme = scheme
+        refreshTokens()
     }
 
     func update(_ transform: (inout DesignTokens) -> Void) {
@@ -139,45 +396,34 @@ final class DesignSettings: ObservableObject {
         tokens = updated
     }
 
-    /// Built-in palettes. The first entry, "Citrus", is the saved snapshot of
-    /// the current production look (lime + navy, with the navy/lime swap while
-    /// locked).
-    static let presets: [DesignPreset] = [
-        DesignPreset(name: "Citrus", tokens: .production),
-        DesignPreset(name: "Grape Soda", tokens: palette(
-            primary: (0.72, 0.55, 0.98),
-            secondary: (0.28, 0.16, 0.45),
-            lockedPrimary: (0.28, 0.16, 0.45),
-            lockedSecondary: (0.72, 0.55, 0.98),
-            accentPink: (1.0, 0.7, 0.85),
-            accentBlue: (0.7, 0.8, 1.0)
-        )),
-        DesignPreset(name: "Sunset", tokens: palette(
-            primary: (1.0, 0.72, 0.3),
-            secondary: (0.78, 0.25, 0.36),
-            lockedPrimary: (0.78, 0.25, 0.36),
-            lockedSecondary: (1.0, 0.72, 0.3),
-            accentPink: (1.0, 0.62, 0.6),
-            accentBlue: (0.99, 0.85, 0.6)
-        ))
-    ]
+    static let presets: [DesignPreset] = DesignScheme.allCases.map {
+        DesignPreset(name: $0.name, tokens: $0.tokens)
+    }
 
-    private static func palette(
-        primary: (Double, Double, Double),
-        secondary: (Double, Double, Double),
-        lockedPrimary: (Double, Double, Double),
-        lockedSecondary: (Double, Double, Double),
-        accentPink: (Double, Double, Double),
-        accentBlue: (Double, Double, Double)
-    ) -> DesignTokens {
-        var tokens = DesignTokens.production
-        tokens.primaryRed = primary.0; tokens.primaryGreen = primary.1; tokens.primaryBlue = primary.2
-        tokens.secondaryRed = secondary.0; tokens.secondaryGreen = secondary.1; tokens.secondaryBlue = secondary.2
-        tokens.lockedPrimaryRed = lockedPrimary.0; tokens.lockedPrimaryGreen = lockedPrimary.1; tokens.lockedPrimaryBlue = lockedPrimary.2
-        tokens.lockedSecondaryRed = lockedSecondary.0; tokens.lockedSecondaryGreen = lockedSecondary.1; tokens.lockedSecondaryBlue = lockedSecondary.2
-        tokens.accentPinkRed = accentPink.0; tokens.accentPinkGreen = accentPink.1; tokens.accentPinkBlue = accentPink.2
-        tokens.accentBlueRed = accentBlue.0; tokens.accentBlueGreen = accentBlue.1; tokens.accentBlueBlue = accentBlue.2
-        return tokens
+    private func persistAndRefresh() {
+        guard !isInitializing else { return }
+        let defaults = UserDefaults.standard
+        defaults.set(cardCornerStyle.rawValue, forKey: AppPreferenceKey.cardCornerStyle)
+        defaults.set(layoutDensity.rawValue, forKey: AppPreferenceKey.layoutDensity)
+        defaults.set(showsSoftBlobs, forKey: AppPreferenceKey.showsSoftBlobs)
+        defaults.set(showsBlockListMascots, forKey: AppPreferenceKey.showsBlockListMascots)
+        defaults.set(usesBoldHeadings, forKey: AppPreferenceKey.usesBoldHeadings)
+        defaults.set(showsSupportingCharacters, forKey: AppPreferenceKey.showsSupportingCharacters)
+        defaults.set(usesCompactStatusCard, forKey: AppPreferenceKey.usesCompactStatusCard)
+        refreshTokens()
+    }
+
+    private func refreshTokens() {
+        var updated = selectedScheme.tokens
+        updated.radiusScale = cardCornerStyle == .rounded ? 1.65 : 0.3
+        updated.spacingScale = layoutDensity == .cozy ? 1.0 : 0.78
+        updated.heroScale = layoutDensity == .cozy ? 1.34 : 1.12
+        updated.showsSoftBlobs = showsSoftBlobs
+        updated.showsBlockListMascots = showsBlockListMascots
+        updated.usesBoldHeadings = usesBoldHeadings
+        updated.showsSupportingCharacters = showsSupportingCharacters
+        updated.usesCompactStatusCard = usesCompactStatusCard
+        tokens = updated
     }
 }
 
@@ -210,26 +456,44 @@ struct PlayfulBackdrop: View {
         ZStack {
             tokens.surface.ignoresSafeArea()
 
-            Circle()
-                .fill(tokens.primary.opacity(0.18))
-                .frame(width: tokens.hero(140))
-                .offset(x: -tokens.hero(150), y: -tokens.hero(210))
+            if tokens.showsSoftBlobs {
+                Circle()
+                    .fill(tokens.primary.opacity(0.18))
+                    .frame(width: tokens.hero(140))
+                    .offset(x: -tokens.hero(150), y: -tokens.hero(210))
 
-            Circle()
-                .fill(tokens.accentPink.opacity(0.16))
-                .frame(width: tokens.hero(96))
-                .offset(x: tokens.hero(130), y: -tokens.hero(120))
+                Circle()
+                    .fill(tokens.accentPink.opacity(0.16))
+                    .frame(width: tokens.hero(96))
+                    .offset(x: tokens.hero(130), y: -tokens.hero(120))
 
-            Circle()
-                .fill(tokens.accentBlue.opacity(0.2))
-                .frame(width: tokens.hero(120))
-                .offset(x: tokens.hero(160), y: tokens.hero(280))
+                Circle()
+                    .fill(tokens.accentBlue.opacity(0.2))
+                    .frame(width: tokens.hero(120))
+                    .offset(x: tokens.hero(160), y: tokens.hero(280))
+            }
         }
     }
 }
 
-enum FruitKind: CaseIterable {
-    case apple, orange, lemon, strawberry, pear, blueberry, watermelon, peach
+enum FruitKind: String, CaseIterable, Identifiable {
+    case strawberry, apple, orange, lemon, peach, pear, blueberry, watermelon
+
+    var id: String { rawValue }
+    var name: String { rawValue.capitalized }
+
+    var clayAssetName: String {
+        switch self {
+        case .apple: "clay_apple"
+        case .orange: "clay_orange"
+        case .lemon: "clay_lemon"
+        case .strawberry: "clay_strawberry"
+        case .pear: "clay_pear"
+        case .blueberry: "clay_blueberry"
+        case .watermelon: "clay_watermelon"
+        case .peach: "clay_peach"
+        }
+    }
 
     var bodyColor: Color {
         switch self {
@@ -241,6 +505,24 @@ enum FruitKind: CaseIterable {
         case .blueberry: Color(red: 0.40, green: 0.47, blue: 0.87)
         case .watermelon: Color(red: 0.36, green: 0.72, blue: 0.38)
         case .peach: Color(red: 1.0, green: 0.71, blue: 0.59)
+        }
+    }
+}
+
+struct ClayFruitView: View {
+    var kind: FruitKind
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        if reduceMotion {
+            // Respect Reduce Motion: show the static clay art, no animation.
+            Image(kind.clayAssetName)
+                .resizable()
+                .scaledToFit()
+        } else {
+            // Live layered Lottie rig (each fruit has its own idle personality).
+            LottieMascotView(fruit: kind, state: .idle)
         }
     }
 }
@@ -264,8 +546,18 @@ struct FruitPersona {
         FruitPersona(fruit: .peach, personality: .sleepy)
     ]
 
-    static func forBlockList(_ index: Int) -> FruitPersona {
-        lineup[((index % lineup.count) + lineup.count) % lineup.count]
+    /// Fruit for a block-list card.
+    ///
+    /// The mascot you picked is the bouncer and belongs to the status card
+    /// alone, so the lists draw from the rest of the cast. Without the
+    /// exclusion the first list gets `lineup[0]` — the strawberry — which is
+    /// also the default mascot, so a fresh install shows the same fruit twice
+    /// on one screen at two different sizes and reads like a rendering bug.
+    static func forBlockList(_ index: Int, excluding mascot: FruitKind? = nil) -> FruitPersona {
+        let cast = lineup.filter { $0.fruit != mascot }
+        // Only possible if the cast is ever trimmed to a single fruit.
+        let pool = cast.isEmpty ? lineup : cast
+        return pool[((index % pool.count) + pool.count) % pool.count]
     }
 
     static func forStatus(isLocked: Bool) -> FruitPersona {
@@ -1454,11 +1746,12 @@ struct LockCharacter: View {
     var isLocked: Bool
     var transitionTrigger: Int = 0
 
+    @Environment(\.designTokens) private var design
     @State private var glitterStart: TimeInterval?
 
-    private let ink = Color(red: 0.13, green: 0.11, blue: 0.13)
-    private let bodyColor = Color(red: 1.0, green: 0.79, blue: 0.33)
-    private let metal = Color(red: 0.66, green: 0.69, blue: 0.74)
+    private var ink: Color { design.text }
+    private var bodyColor: Color { design.primary }
+    private var metal: Color { design.accentBlue }
 
     var body: some View {
         TimelineView(.animation) { timeline in
@@ -1509,7 +1802,7 @@ struct LockCharacter: View {
         context.fill(Path(roundedRect: bodyRect, cornerRadius: bodyH * 0.34), with: .color(bodyColor))
         context.fill(
             Path(ellipseIn: CGRect(x: bodyRect.minX + bodyW * 0.12, y: bodyRect.minY + bodyH * 0.12, width: bodyW * 0.26, height: bodyH * 0.22)),
-            with: .color(.white.opacity(0.45))
+            with: .color(design.secondary.opacity(0.55))
         )
 
         drawFace(context, bodyCenter: bodyCenter, bodyW: bodyW, bodyH: bodyH, s: s, lw: lw, pose: pose)
@@ -1554,7 +1847,7 @@ struct LockCharacter: View {
 
         func dotEye(_ p: CGPoint, scale: CGFloat = 1) {
             context.fill(Path(ellipseIn: CGRect(x: p.x - eyeR * scale, y: p.y - eyeR * scale, width: eyeR * 2 * scale, height: eyeR * 2 * scale)), with: .color(ink))
-            context.fill(Path(ellipseIn: CGRect(x: p.x - eyeR * scale * 0.5, y: p.y - eyeR * scale * 0.6, width: eyeR * scale * 0.7, height: eyeR * scale * 0.7)), with: .color(.white))
+            context.fill(Path(ellipseIn: CGRect(x: p.x - eyeR * scale * 0.5, y: p.y - eyeR * scale * 0.6, width: eyeR * scale * 0.7, height: eyeR * scale * 0.7)), with: .color(design.secondary))
         }
         func closedEye(_ p: CGPoint) {
             var path = Path()
@@ -1598,7 +1891,7 @@ struct LockCharacter: View {
         let bubbleR = s * 0.045 * (0.6 + 0.4 * CGFloat(sin(time * 2)))
         let bp = CGPoint(x: bodyCenter.x + bodyW * 0.2, y: bodyCenter.y + bodyH * 0.18)
         let bubble = Path(ellipseIn: CGRect(x: bp.x - bubbleR, y: bp.y - bubbleR, width: bubbleR * 2, height: bubbleR * 2))
-        context.fill(bubble, with: .color(Color(red: 0.7, green: 0.85, blue: 1.0).opacity(Double(sleep) * 0.5)))
+        context.fill(bubble, with: .color(design.accentPink.opacity(Double(sleep) * 0.5)))
         context.stroke(bubble, with: .color(metal.opacity(Double(sleep) * 0.6)), lineWidth: max(1, s * 0.012))
 
         // Rising "z z z" up to the right.
@@ -1616,7 +1909,7 @@ struct LockCharacter: View {
     private func drawGlitter(_ context: GraphicsContext, center: CGPoint, radius: CGFloat, pose: LockCharacterPose) {
         let count = 12
         let env = pose.glitter
-        let colors: [Color] = [.white, Color(red: 1.0, green: 0.95, blue: 0.6), Color(red: 1.0, green: 0.82, blue: 0.45)]
+        let colors: [Color] = [design.secondary, design.accentPink, design.accentBlue]
         for i in 0..<count {
             let angle = CGFloat(i) / CGFloat(count) * 2 * .pi - .pi / 2
             let travel = radius * (0.35 + pose.glitterProgress * 0.75)
@@ -1734,11 +2027,16 @@ struct PrimaryCTAStyle: ButtonStyle {
         return tokens.secondaryFor(locked: lockState)
     }
 
+    /// Disabled buttons drop to `muted`, which is a pale cream — keeping the
+    /// on-primary `ink` there left the label at about 1.1:1 against its own
+    /// background, i.e. invisible. Disabled still has to be readable.
+    private var disabledInk: Color { tokens.inkOnSurface(0.45) }
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: tokens.type(16), weight: .black, design: .rounded))
             .tracking(0.6)
-            .foregroundStyle(ink)
+            .foregroundStyle(isEnabled ? ink : disabledInk)
             .frame(maxWidth: .infinity)
             .frame(height: tokens.spacing(58))
             .background(
@@ -1861,7 +2159,7 @@ struct DesignDebugPanel: View {
             tokenSlider("Spacing", value: binding(\.spacingScale), range: 0.75...1.35)
             tokenSlider("Corners", value: binding(\.radiusScale), range: 0.55...1.65)
             tokenSlider("Type", value: binding(\.typeScale), range: 0.85...1.2)
-            tokenSlider("Hero size", value: binding(\.heroScale), range: 0.75...1.3)
+            tokenSlider("Hero size", value: binding(\.heroScale), range: 0.75...1.4)
             tokenSlider("Shadow", value: binding(\.shadowScale), range: 0...1.7)
         }
         .padding(16)
