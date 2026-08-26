@@ -189,7 +189,14 @@ def arm_layers(char, ind, op, beats, pivots, drag=ARM_DRAG, sway=ARM_SWAY):
     swing through. That lag is what reads as "natural" - arms moving in lockstep
     with the body look glued on.
     """
-    peak = max(1.0, max(-b[2] for b in beats))
+    # Normalise against the largest excursion in EITHER direction. Using only
+    # the lift (-b[2]) breaks any pose that never leaves the ground: on duty is
+    # a sway with dy of 4,4,0,4,4, so max(-dy) is 0, peak clamps to 1.0, and the
+    # division stops normalising — rot becomes drag x dy-in-pixels (26 degrees)
+    # instead of drag x fraction (6.5). At 26 degrees held continuously the arm
+    # swings clear of the torso and exposes the stub the cut left behind, so the
+    # locked screen showed two pairs of arms.
+    peak = max(1.0, max(abs(b[2]) for b in beats))
     times = sorted({b[0] for b in beats} |
                    {(beats[i][0] + beats[i + 1][0]) // 2 for i in range(len(beats) - 1)})
     if times[-1] != op:
@@ -543,7 +550,10 @@ PIVOTS = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
 if __name__ == "__main__":
     here = os.path.dirname(os.path.abspath(__file__))
     geom = json.load(open(os.path.join(here, "chars.json")))
-    out_dir = "/Users/hans_vador/Desktop/Broke/Broke/MascotLottie"
+    # Derived from this file's location rather than hardcoded: the absolute
+    # path this used to carry pointed at ~/Desktop/Broke, so re-running the
+    # generator from the repo's current home failed outright.
+    out_dir = os.path.normpath(os.path.join(here, "..", "..", "Broke", "MascotLottie"))
     worst = 1e9
     for fruit in PERSONA:
         char = Char(geom[f"{fruit}_char"])

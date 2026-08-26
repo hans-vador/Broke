@@ -146,12 +146,12 @@ struct OnboardingView: View {
                 .font(.system(size: design.type(44), weight: .black, design: .rounded))
                 .foregroundStyle(design.text)
 
-            Text("A social media blocker with a bouncer.")
+            Text("Block the apps that waste your time.")
                 .font(.system(size: design.type(17), weight: .bold, design: .rounded))
                 .foregroundStyle(design.text.opacity(0.62))
                 .multilineTextAlignment(.center)
 
-            Text("You pick the apps. You pick how they get locked. After that, Broke is the one holding the keys — and it isn't a pushover.")
+            Text("Choose which apps to block and how to unlock them. After that, unlocking is deliberately slow.")
                 .font(.system(size: design.type(14), weight: .semibold, design: .rounded))
                 .foregroundStyle(design.text.opacity(0.46))
                 .multilineTextAlignment(.center)
@@ -163,20 +163,20 @@ struct OnboardingView: View {
 
     private var howStep: some View {
         VStack(alignment: .leading, spacing: design.spacing(22)) {
-            stepTitle("How this works", "Three moving parts, that's it.")
+            stepTitle("How this works", "Three steps.")
 
-            howRow("1", "square.stack.3d.up.fill", "Build a block list",
-                   "The apps and sites eating your day. Make as many lists as you like.")
-            howRow("2", "lock.fill", "Choose your lock",
-                   "A tag, a pod, both, or no hardware and a thirty second wait.")
-            howRow("3", "figure.walk.motion", "Go live your life",
-                   "Those apps stop opening. Your mascot handles the door.")
+            howRow("1", "square.stack.3d.up.fill", "Choose your apps",
+                   "Pick the apps you want blocked. You can make more than one list.")
+            howRow("2", "lock.fill", "Choose how to unlock",
+                   "A tag, a pod, both, or a 30 second wait.")
+            howRow("3", "figure.walk.motion", "Done",
+                   "Those apps stop opening until you unlock them.")
         }
     }
 
     private var modeStep: some View {
         VStack(alignment: .leading, spacing: design.spacing(16)) {
-            stepTitle("Pick your lock", "How should Broke stop you?")
+            stepTitle("Pick your lock", "How do you want to unlock your apps?")
 
             ForEach(LockMode.allCases) { mode in
                 modeCard(mode)
@@ -264,14 +264,14 @@ struct OnboardingView: View {
                 .foregroundStyle(design.text)
                 .multilineTextAlignment(.center)
 
-            Text("This is how Broke works on this phone now. No settings screen, no renegotiating at midnight.")
+            Text("This cannot be changed later.")
                 .font(.system(size: design.type(14), weight: .semibold, design: .rounded))
                 .foregroundStyle(design.text.opacity(0.5))
                 .multilineTextAlignment(.center)
                 .lineSpacing(4)
 
             Toggle(isOn: $isConfirmingMode) {
-                Text("Yeah, I'm sure.")
+                Text("I understand.")
                     .font(.system(size: design.type(14), weight: .black, design: .rounded))
                     .foregroundStyle(design.text)
             }
@@ -283,7 +283,7 @@ struct OnboardingView: View {
 
     private var mascotStep: some View {
         VStack(alignment: .leading, spacing: design.spacing(16)) {
-            stepTitle("Pick your bouncer", "They'll be the one guarding your apps.")
+            stepTitle("Pick your mascot", "It appears on your home screen.")
 
             LottieMascotView(fruit: mascot, state: .idle)
                 .frame(height: design.hero(170))
@@ -466,11 +466,11 @@ struct OnboardingView: View {
             LottieMascotView(fruit: mascot, state: .onDuty)
                 .frame(height: design.hero(200))
 
-            Text("You're all set")
+            Text("Setup complete")
                 .font(.system(size: design.type(32), weight: .black, design: .rounded))
                 .foregroundStyle(design.text)
 
-            Text("\(mascot.name.capitalized)'s on the door. Be nice — they're only doing what you asked.")
+            Text("Your chosen apps are now blocked until you unlock them.")
                 .font(.system(size: design.type(15), weight: .semibold, design: .rounded))
                 .foregroundStyle(design.text.opacity(0.5))
                 .multilineTextAlignment(.center)

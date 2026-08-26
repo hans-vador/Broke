@@ -122,7 +122,7 @@ struct ContentView: View {
                 isChoosingApps = true
             }
         } message: {
-            Text("A separate set of apps you can switch to in one tap — strict for work, looser for weekends.")
+            Text("A separate set of apps you can switch to in one tap.")
         }
         .confirmationDialog(
             "Use an emergency unlock?",
@@ -134,7 +134,7 @@ struct ContentView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("You get three, ever. They don't come back unless Broke is deleted and reinstalled — so save them for the real emergencies.")
+            Text("You get three in total. They do not reset. Use them only if you really need to.")
         }
         .sheet(item: $model.popup) { popup in
             StatusPopup(popup: popup) {
@@ -427,32 +427,32 @@ struct ContentView: View {
     }
 
     private var statusHeadline: String {
-        if model.unlockCountdown != nil { return "Thinking about it…" }
-        if model.displayedIsLocked { return "Locked up" }
-        return model.hasSelection ? "Ready when you are" : "Nothing blocked yet"
+        if model.unlockCountdown != nil { return "Unlocking" }
+        if model.displayedIsLocked { return "Apps blocked" }
+        return model.hasSelection ? "Ready to lock" : "No apps chosen"
     }
 
     private var statusSubhead: String {
         if let remaining = model.unlockCountdown {
-            return "\(remaining) seconds until your apps come back."
+            return "\(remaining) seconds left."
         }
         if model.displayedIsLocked {
             switch model.lockMode {
-            case .tag: return "Tap your tag when you're genuinely done."
-            case .pod: return "You're in the pod's room. Walk out to unblock."
+            case .tag: return "Tap your tag to unlock."
+            case .pod: return "Leave the room to unlock."
             case .both:
                 return model.isBLEPodNear
-                    ? "Your pod's got you. Leave the room, then tap the tag."
-                    : "Tap your tag when you're genuinely done."
-            case .timer: return "Unlocking costs you thirty seconds."
+                    ? "Leave the room, then tap your tag."
+                    : "Tap your tag to unlock."
+            case .timer: return "Unlocking takes 30 seconds."
             }
         }
-        if !model.hasSelection { return "Pick the apps stealing your evenings." }
+        if !model.hasSelection { return "Choose which apps to block." }
         switch model.lockMode {
-        case .tag: return "Tap your tag to start a session."
-        case .pod: return "Walk into your pod's room to start blocking."
-        case .both: return "Tap your tag, or just walk into your pod's room."
-        case .timer: return "Lock it whenever you're ready to get going."
+        case .tag: return "Tap your tag to lock."
+        case .pod: return "Enter the pod's room to lock."
+        case .both: return "Tap your tag, or enter the pod's room."
+        case .timer: return "Lock whenever you're ready."
         }
     }
 
@@ -688,10 +688,10 @@ struct ContentView: View {
                 .frame(width: 22)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Locking with \(model.lockMode.title)")
+                Text("Unlock method: \(model.lockMode.title)")
                     .font(.system(size: design.type(12), weight: .black, design: .rounded))
                     .foregroundStyle(design.text.opacity(0.7))
-                Text("Chosen at setup. Permanent.")
+                Text("Set during setup. Cannot be changed.")
                     .font(.system(size: design.type(10), weight: .semibold, design: .rounded))
                     .foregroundStyle(design.text.opacity(0.4))
             }
@@ -910,7 +910,7 @@ private struct AppearanceSettingsView: View {
     /// control here on purpose — the mode cannot be changed after setup.
     private var howItWorksSection: some View {
         VStack(alignment: .leading, spacing: design.spacing(14)) {
-            sectionTitle("How Broke works", subtitle: "Your setup, and what it means.")
+            sectionTitle("How Broke works", subtitle: "Your current setup.")
 
             VStack(alignment: .leading, spacing: design.spacing(14)) {
                 HStack(spacing: design.spacing(13)) {
@@ -942,7 +942,7 @@ private struct AppearanceSettingsView: View {
 
                 Divider().overlay(design.text.opacity(0.08))
 
-                Text("This was a one-time choice, so it can't be changed here. If you genuinely need a different setup, delete Broke and start again — and be honest with yourself about why.")
+                Text("This was set during setup and cannot be changed. To use a different method, delete Broke and set it up again.")
                     .font(.system(size: design.type(11), weight: .semibold, design: .rounded))
                     .foregroundStyle(design.text.opacity(0.4))
                     .fixedSize(horizontal: false, vertical: true)
@@ -959,7 +959,7 @@ private struct AppearanceSettingsView: View {
 
     private var mascotSection: some View {
         VStack(alignment: .leading, spacing: design.spacing(14)) {
-            sectionTitle("Mascot", subtitle: "Pick a fruit for your focus card.")
+            sectionTitle("Mascot", subtitle: "Pick the fruit shown on your home screen.")
 
             LazyVGrid(columns: mascotColumns, spacing: design.spacing(14)) {
                 ForEach(FruitKind.allCases) { fruit in
@@ -1068,7 +1068,7 @@ private struct AppearanceSettingsView: View {
 
     private var interfaceSection: some View {
         VStack(alignment: .leading, spacing: design.spacing(14)) {
-            sectionTitle("Interface", subtitle: "Tune the shape, spacing, and personality.")
+            sectionTitle("Interface", subtitle: "Shape and spacing.")
 
             VStack(spacing: 0) {
                 choiceRow(

@@ -30,9 +30,9 @@ enum LockMode: String, CaseIterable, Identifiable, Codable {
 
     var tagline: String {
         switch self {
-        case .tag: "Tap to commit"
-        case .pod: "Walk in, get blocked"
-        case .both: "The full setup"
+        case .tag: "Tap to lock and unlock"
+        case .pod: "Locks while you're in the room"
+        case .both: "Tag and pod together"
         case .timer: "No hardware needed"
         }
     }
@@ -40,13 +40,13 @@ enum LockMode: String, CaseIterable, Identifiable, Codable {
     var blurb: String {
         switch self {
         case .tag:
-            "Stick it somewhere annoying — desk, fridge, gym bag. Tap to lock, tap to unlock. No tag, no temptation."
+            "Keep the tag somewhere away from your desk. Tap it to lock your apps, tap it again to unlock."
         case .pod:
-            "Leave it in the room you actually work in. Walk in, your apps lock. Walk out, they come back."
+            "Keep the pod in the room you work in. Your apps lock while you are in range and unlock when you leave."
         case .both:
-            "The pod holds the room, the tag covers everywhere else. Either one locks you. Both have to let you go."
+            "Either the tag or the pod can lock your apps. Both have to agree before they unlock."
         case .timer:
-            "Lock from the app. Unlocking costs thirty seconds of sitting with it — usually long enough to change your mind."
+            "Lock from the app. Unlocking takes 30 seconds."
         }
     }
 
@@ -64,10 +64,10 @@ enum LockMode: String, CaseIterable, Identifiable, Codable {
     /// One-liner shown on the home screen under the status card.
     var homeHint: String {
         switch self {
-        case .tag: "Only your paired tag can flip this lock."
-        case .pod: "Apps follow the pod. Leave the room to get them back."
-        case .both: "Tag or pod, either one locks you. Both have to let you go."
-        case .timer: "Unlocking takes thirty seconds. On purpose."
+        case .tag: "Only your paired tag can unlock this."
+        case .pod: "Your apps unlock when you leave the pod's room."
+        case .both: "Either one locks your apps. Both have to agree to unlock."
+        case .timer: "Unlocking takes 30 seconds."
         }
     }
 }
