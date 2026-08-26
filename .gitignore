@@ -29,3 +29,6 @@ tmp/
 # To share it across machines instead, drop this line — the union merge driver
 # for graph.json is already registered in .git/config.
 graphify-out/
+
+# Python bytecode from the mascot tooling
+__pycache__/

@@ -257,7 +257,10 @@ def eyelid_layers(char, ind, op, closes, squint=0.0, wink_right_only=False):
     the face the moment the body deforms.
     """
     e = char.eyes
-    ew, eh = e["w"] * 1.04, max(e["h"], 30) * 1.12
+    eye_h = max(e["h"], 30)
+    # The lid is drawn slightly larger than the eye so a full blink leaves no
+    # sliver at the edges. That overshoot must hang off the BOTTOM, not the top.
+    ew, eh = e["w"] * 1.04, eye_h * 1.12
     layers = []
     for side, (ex, ey) in (("L", (e["lx"], e["ly"])), ("R", (e["rx"], e["ry"]))):
         pts = [(0, [100, squint * 100, 100])]
@@ -274,11 +277,36 @@ def eyelid_layers(char, ind, op, closes, squint=0.0, wink_right_only=False):
         for p in pts:
             seen[p[0]] = p
         pts = sorted(seen.values(), key=lambda p: p[0])
-        layers.append(shape_layer(
-            ind, f"blink{side}",
+        # Two layers per eye: an eye-shaped alpha matte, then the lid matted
+        # into it.
+        #
+        # The lid closes downward, so it is anchored on its own top edge and
+        # positioned on the eye's top edge. Anchoring it at its centre (the
+        # default) made a partly-closed lid shrink toward the middle of the eye
+        # and sit there as a band, leaving eye visible above AND below — a
+        # second pair of eyes on any pose with a resting squint. Only on duty
+        # has one (0.46); idle and celebrate squint 0.0, so the lid was
+        # invisible there and the bug never showed.
+        #
+        # Anchoring alone is not enough. Scaling an ellipse vertically keeps it
+        # full width, so a half-closed lid is still as wide as the eye's widest
+        # point while covering a part of the eye that is narrower than that —
+        # it spills onto the cheek either side, and a flat fill on a shaded
+        # render reads as a sticker. The matte clips it back to the eye.
+        matte = shape_layer(
+            ind, f"eyeMask{side}",
+            ellipse(round(e["w"], 1), round(eye_h, 1), char.colour, f"{side} eye mask"),
+            op, pos=static([ex, ey, 0]), scale=static([100, 100, 100]),
+            parent=CHAR_IND)
+        matte["td"] = 1
+        lid = shape_layer(
+            ind + 1, f"blink{side}",
             ellipse(round(ew, 1), round(eh, 1), char.colour, f"{side} eyelid"),
-            op, pos=static([ex, ey, 0]), scale=kf(pts), parent=CHAR_IND))
-        ind += 1
+            op, pos=static([ex, ey - eye_h / 2, 0]), scale=kf(pts),
+            parent=CHAR_IND, anchor=(0, -eh / 2))
+        lid["tt"] = 1
+        layers += [matte, lid]
+        ind += 2
     return layers, ind
 
 
@@ -474,11 +502,18 @@ PERSONA = {
 
 # Locked: planted, low, watchful. Weight forward, minimal float, narrowed eyes.
 DUTY_BEATS = [
-    (0, 0, 4, .035, -.045, 0),
-    (48, -5, 4, .03, -.04, -2.2),
-    (96, 0, 0, .045, -.055, 0),
-    (144, 5, 4, .03, -.04, 2.2),
-    (190, 0, 4, .035, -.045, 0),
+    # Squash must stay UNIFORM (sx == sy) here. The arms are parented to the
+    # torso, so they are rotated in their own space and then take the parent's
+    # scale — a non-uniform parent shears the rotated arm relative to the torso
+    # it was cut from, and the cut edge stops lining up. Idle gets away with a
+    # squash because its x/y ratio passes back through 1.0 every beat; on duty
+    # held 1.07-1.11 permanently, so the seam never closed and each arm read as
+    # a separate piece laid over the body.
+    (0, 0, 4, -.015, -.015, 0),
+    (48, -5, 4, -.01, -.01, -2.2),
+    (96, 0, 0, -.02, -.02, 0),
+    (144, 5, 4, -.01, -.01, 2.2),
+    (190, 0, 4, -.015, -.015, 0),
 ]
 
 # One-shot celebration: deep anticipation, big air, hard landing, settle.
@@ -503,7 +538,16 @@ def build(fruit, char, kind):
         squint = 0.0
     elif kind == "onDuty":
         op, beats, blinks, sig = 190, DUTY_BEATS, [(150, 156)], None
-        squint = 0.46
+        # No resting squint. The lid is a flat body-coloured ellipse, and the
+        # source renders have fully shaded eyes with a specular highlight — so a
+        # half-closed lid sits on the eye as an obviously flat disc, covering the
+        # highlight and leaving a black crescent under it. That reads as two
+        # shapes per socket rather than one half-closed eye, which is what made
+        # the locked screen look like it had a second mascot behind the first.
+        # On duty now differs by pose and timing only, and keeps the face the
+        # artist actually drew. Blinks still close fully; they are five frames,
+        # so the flat fill never registers.
+        squint = 0.0
     else:
         op, beats, blinks, sig = 116, CELEBRATE_BEATS, [(96, 101)], "celebrate"
         squint = 0.0
@@ -528,8 +572,21 @@ def build(fruit, char, kind):
     pos, scl, rot = body_tracks(char, beats)
     body = img_layer(CHAR_IND, "torso", "char", op, anchor=char.anchor,
                      pos=kf(pos), scale=kf(scl), rot=kf(rot))
+    # On duty holds its arms at the rest position, where torso and arms
+    # recomposite to the original render exactly. Any rotation at all lifts the
+    # cut edge out from under the torso on this art — measured by freezing the
+    # arms and watching every seam disappear — and on duty is the one clip the
+    # user sits and looks at, so a permanently visible seam down each arm made
+    # the limbs read as separate pieces laid over the body. It keeps its life
+    # from the body sway and lean instead.
+    #
+    # Idle and celebrate still swing, and can show the same seam at the ends of
+    # their travel; they pass back through zero every beat, so it reads as a
+    # flicker rather than a static join. Worth revisiting in cutarms.swift with
+    # a deeper overlap rather than papering over it here.
     arms, ind = arm_layers(char, ind, op, beats, PIVOTS[fruit],
-                           drag=ARM_DRAG * (1.5 if kind == "celebrate" else 1.0))
+                           drag=0 if kind == "onDuty" else ARM_DRAG * (1.5 if kind == "celebrate" else 1.0),
+                           sway=0 if kind == "onDuty" else ARM_SWAY)
     shadow, ind = shadow_layers(char, ind, op, beats)
 
     name = {"idle": "idle", "onDuty": "on duty", "celebrate": "celebrate"}[kind]
