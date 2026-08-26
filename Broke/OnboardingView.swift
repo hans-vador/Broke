@@ -89,6 +89,10 @@ struct OnboardingView: View {
             }
         }
         .preferredColorScheme(.light)
+        // Going back and picking a different mode has to re-earn the
+        // confirmation, or the toggle you ticked for the previous choice
+        // carries over and waves the new one straight through.
+        .onChange(of: chosenMode) { _, _ in isConfirmingMode = false }
         .familyActivityPicker(isPresented: $isChoosingApps, selection: $model.selection)
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: step)
     }
@@ -186,7 +190,7 @@ struct OnboardingView: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: design.type(13), weight: .bold))
                     .foregroundStyle(design.signal)
-                Text("This one sticks. Changing it later means deleting the app — that's the point.")
+                Text("You can't change this later. To use a different method you have to delete the app and set it up again.")
                     .font(.system(size: design.type(12), weight: .bold, design: .rounded))
                     .foregroundStyle(design.text.opacity(0.55))
                     .fixedSize(horizontal: false, vertical: true)
@@ -590,14 +594,17 @@ struct OnboardingView: View {
 
     private var previousStep: Step? {
         switch step {
-        case .welcome, .done: nil
+        // Every step back to the first one. Nothing is written until the very
+        // end of the flow, so there is nothing behind you that cannot be
+        // revisited — see `advance()`.
+        case .welcome: nil
         case .how: .welcome
         case .mode: .how
         case .confirmMode: .mode
-        // The mode is already committed by this point, so there is no going back.
-        case .mascot: nil
+        case .mascot: .confirmMode
         case .apps: .mascot
         case .hardware: .apps
+        case .done: .hardware
         }
     }
 
@@ -606,16 +613,23 @@ struct OnboardingView: View {
         case .welcome: step = .how
         case .how: step = .mode
         case .mode: step = .confirmMode
-        case .confirmMode:
-            if let chosenMode {
-                LockModeStore.commit(chosenMode)
-                model.adoptCommittedLockMode()
-            }
-            step = .mascot
+        case .confirmMode: step = .mascot
         case .mascot: step = .apps
         case .apps: step = .hardware
         case .hardware: step = .done
         case .done:
+            // The lock mode is written here, at the end, rather than when it is
+            // confirmed. Committing it early is what made the confirm step a
+            // one-way door — `LockModeStore.commit` refuses to overwrite, so
+            // once past it every earlier screen was a lie and Back had to be
+            // removed. It also stranded anyone who quit mid-setup: the mode was
+            // already stored but `hasOnboarded` was not, so onboarding ran
+            // again, the new choice was silently refused, and they ended up on
+            // the old mode. Nothing is permanent until setup actually finishes.
+            if let chosenMode {
+                LockModeStore.commit(chosenMode)
+                model.adoptCommittedLockMode()
+            }
             LockModeStore.hasOnboarded = true
             finish()
         }
