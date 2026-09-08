@@ -1,6 +1,7 @@
 import Combine
 import CoreBluetooth
 import Foundation
+import UIKit
 
 @MainActor
 final class BLEProximityManager: NSObject, ObservableObject {
@@ -32,6 +33,16 @@ final class BLEProximityManager: NSObject, ObservableObject {
     private var runtimes: [UUID: PodRuntime] = [:]
     private var pairedPods: [String: StoredPod] = [:]
     private var rssiTimer: Timer?
+
+    /// Background wake support. When iOS wakes us for a BLE event we get a few
+    /// seconds of execution, and the foreground RSSI timer is suspended — so
+    /// near/far would never settle. `didConnect` starts a short burst of
+    /// readRSSI() calls instead, held open by a background task assertion.
+    /// Without this, walking back into the room reconnected the pod but never
+    /// produced the one sample `isNear` needs, so re-locking waited for the
+    /// app to be opened — the lock only worked with the app on screen.
+    private var backgroundReadsRemaining = 0
+    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     private var calibrationSamples: [Double] = []
     private var calibrationHeldIsNear: Bool?
 
@@ -245,6 +256,11 @@ final class BLEProximityManager: NSObject, ObservableObject {
             runtime.isConnected = true
             peripheral.discoverServices([Self.serviceUUID])
             publishSnapshots()
+            // A pod restored in the connected state never passes through
+            // didConnect, so without this the background sampler never runs
+            // after a relaunch and near/far sits unset until the next
+            // heartbeat arrives.
+            beginBackgroundSampling(peripheral)
         } else if !runtime.isConnected, peripheral.state == .disconnected {
             central.connect(
                 peripheral,
@@ -303,6 +319,7 @@ final class BLEProximityManager: NSObject, ObservableObject {
                 runtime.isNear = true
                 runtime.nearSamples = 0
                 runtime.farSamples = 0
+                BackgroundJournal.record("pod near (\(Int(filtered)) dBm)")
             }
         } else {
             runtime.farSamples = filtered <= threshold.unlock
@@ -312,6 +329,7 @@ final class BLEProximityManager: NSObject, ObservableObject {
                 runtime.isNear = false
                 runtime.nearSamples = 0
                 runtime.farSamples = 0
+                BackgroundJournal.record("pod far (\(Int(filtered)) dBm)")
             }
         }
 
@@ -439,6 +457,7 @@ extension BLEProximityManager: CBCentralManagerDelegate {
     ) {
         let restored = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] ?? []
         Task { @MainActor in
+            BackgroundJournal.record("relaunched by Bluetooth, \(restored.count) pod(s) restored")
             for peripheral in restored {
                 self.connectIfNeeded(peripheral)
             }
@@ -472,8 +491,10 @@ extension BLEProximityManager: CBCentralManagerDelegate {
         Task { @MainActor in
             guard let runtime = self.runtimes[peripheral.identifier] else { return }
             runtime.isConnected = true
+            BackgroundJournal.record("pod connected")
             peripheral.discoverServices([Self.serviceUUID])
             self.publishSnapshots()
+            self.beginBackgroundSampling(peripheral)
         }
     }
 
@@ -500,6 +521,7 @@ extension BLEProximityManager: CBCentralManagerDelegate {
                 runtime.nearSamples = 0
                 runtime.farSamples = 0
             }
+            BackgroundJournal.record("pod disconnected")
             self.publishSnapshots()
             self.startScanning()
         }
@@ -519,6 +541,7 @@ extension BLEProximityManager: CBCentralManagerDelegate {
                 runtime.nearSamples = 0
                 runtime.farSamples = 0
             }
+            BackgroundJournal.record("pod disconnected (reconnecting: \(isReconnecting))")
             self.publishSnapshots()
 
             if !isReconnecting {
@@ -620,6 +643,54 @@ extension BLEProximityManager: CBPeripheralDelegate {
         guard error == nil else { return }
         Task { @MainActor in
             self.processRSSI(RSSI.intValue, for: peripheral.identifier)
+            self.continueBackgroundSampling(peripheral)
         }
+    }
+}
+
+// MARK: - Background sampling
+
+extension BLEProximityManager {
+    /// Starts the burst of RSSI reads that stands in for the foreground timer
+    /// during a background wake. No-op while the app is active.
+    fileprivate func beginBackgroundSampling(_ peripheral: CBPeripheral) {
+        guard UIApplication.shared.applicationState != .active else { return }
+        holdBackgroundWindow()
+        backgroundReadsRemaining = 5
+        peripheral.readRSSI()
+    }
+
+    fileprivate func continueBackgroundSampling(_ peripheral: CBPeripheral) {
+        guard backgroundReadsRemaining > 0 else { return }
+        backgroundReadsRemaining -= 1
+        guard backgroundReadsRemaining > 0 else {
+            releaseBackgroundWindow()
+            return
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard let self, self.backgroundReadsRemaining > 0 else { return }
+            peripheral.readRSSI()
+        }
+    }
+
+    /// Asks iOS to keep us running while the burst completes; released when
+    /// the reads finish, when the system says time is up, or by the failsafe.
+    private func holdBackgroundWindow() {
+        guard backgroundTaskID == .invalid else { return }
+        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "BrokePodEvent") { [weak self] in
+            Task { @MainActor in self?.releaseBackgroundWindow() }
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(8))
+            self?.releaseBackgroundWindow()
+        }
+    }
+
+    private func releaseBackgroundWindow() {
+        backgroundReadsRemaining = 0
+        guard backgroundTaskID != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTaskID)
+        backgroundTaskID = .invalid
     }
 }

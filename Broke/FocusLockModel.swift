@@ -21,6 +21,7 @@ final class FocusLockModel: ObservableObject {
     static let isNFCTestBypassEnabled = false
 #endif
     private static let lockFeedbackDelay: UInt64 = 300_000_000
+    private static let countdownNotificationID = "brokeUnlockCountdownComplete"
     private static let duplicateScanWindow: TimeInterval = 1.25
 #if DEBUG
     private static let isMascotDemoEnabled = ProcessInfo.processInfo.environment["MASCOT_DEMO"] == "1"
@@ -45,12 +46,43 @@ final class FocusLockModel: ObservableObject {
 
     @Published var selection: FamilyActivitySelection {
         didSet {
+            // Reverting below re-enters this setter; ignore that pass.
+            guard !isRevertingSelection else { return }
+
+            // The block list is the lock. Editing it while locked was the
+            // simplest possible way out — deselect everything and nothing is
+            // blocked, with `applyShields()` below faithfully re-applying the
+            // emptied list. Refuse the write instead, and put it back.
+            guard canEditBlockLists else {
+                if selection != oldValue {
+                    isRevertingSelection = true
+                    selection = oldValue
+                    isRevertingSelection = false
+                    blockedEditAttempts += 1
+                }
+                return
+            }
+
             updateActiveProfileSelection()
             if isLocked {
                 applyShields()
             }
         }
     }
+
+    /// Set while `selection` is being put back, so the resulting `didSet` pass
+    /// does not treat the revert as another edit to refuse.
+    private var isRevertingSelection = false
+
+    /// Bumped whenever a change to the block list is refused because the lock
+    /// is on. The home screen watches it so the refusal is explained rather
+    /// than looking like the tap did nothing.
+    @Published private(set) var blockedEditAttempts = 0
+
+    /// Block lists can only be changed while unlocked. Every mutation path goes
+    /// through this — editing the active list, switching lists, creating one,
+    /// deleting one — because any of them can change which apps are blocked.
+    var canEditBlockLists: Bool { !isLocked }
     @Published private(set) var blockProfiles: [BlockProfile]
     @Published private(set) var activeProfileID: UUID
     @Published private(set) var isLocked: Bool
@@ -93,6 +125,7 @@ final class FocusLockModel: ObservableObject {
         static let tagID = "focusTagID"
         static let emergencyUnlocksRemaining = "emergencyUnlocksRemaining"
         static let lockStartedAt = "lockStartedAt"
+        static let unlockCountdownEndsAt = "unlockCountdownEndsAt"
     }
 
     init() {
@@ -140,6 +173,28 @@ final class FocusLockModel: ObservableObject {
             emergencyUnlocksRemaining = defaults.integer(forKey: Key.emergencyUnlocksRemaining)
         }
         authorizationStatus = AuthorizationCenter.shared.authorizationStatus
+
+        // A pending app-only unlock keeps counting while the app is gone.
+        if let end = defaults.object(forKey: Key.unlockCountdownEndsAt) as? Date {
+            if !isManualLocked || lockMode != .timer {
+                // Stale: the lock it belonged to is no longer in effect.
+                defaults.removeObject(forKey: Key.unlockCountdownEndsAt)
+            } else if end.timeIntervalSinceNow <= 0 {
+                // The wait finished while Broke was suspended or dead —
+                // arrive already unlocked instead of resurrecting the lock.
+                isManualLocked = false
+                isLocked = false
+                displayedIsLocked = false
+                lockStartedAt = nil
+                defaults.set(false, forKey: Key.isLocked)
+                defaults.removeObject(forKey: Key.lockStartedAt)
+                defaults.removeObject(forKey: Key.unlockCountdownEndsAt)
+                store.clearAllSettings()
+                BackgroundJournal.record("countdown finished while Broke was closed — arrived unlocked")
+            } else {
+                runUnlockCountdown(until: end)
+            }
+        }
 
         if isLocked && hasScreenTimeAuthorization {
             applyShields()
@@ -336,6 +391,9 @@ final class FocusLockModel: ObservableObject {
     }
 
     func addBlockProfile(named name: String) {
+        // A new list starts empty and is activated immediately, so this is a
+        // two-tap bypass if it is allowed while locked.
+        guard canEditBlockLists else { blockedEditAttempts += 1; return }
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let profile = BlockProfile(
             name: trimmedName.isEmpty ? "List \(blockProfiles.count + 1)" : trimmedName,
@@ -346,6 +404,9 @@ final class FocusLockModel: ObservableObject {
     }
 
     func selectBlockProfile(_ id: UUID) {
+        // Switching lists swaps the whole selection, so an empty list is a
+        // one-tap bypass.
+        guard canEditBlockLists else { blockedEditAttempts += 1; return }
         guard id != activeProfileID,
               let profile = blockProfiles.first(where: { $0.id == id }) else {
             return
@@ -357,6 +418,8 @@ final class FocusLockModel: ObservableObject {
     }
 
     func deleteBlockProfile(_ id: UUID) {
+        // Deleting the active list falls back to another list's selection.
+        guard canEditBlockLists else { blockedEditAttempts += 1; return }
         guard blockProfiles.count > 1,
               let index = blockProfiles.firstIndex(where: { $0.id == id }) else {
             return
@@ -422,19 +485,62 @@ final class FocusLockModel: ObservableObject {
     /// pause is the entire product, so it deliberately cannot be skipped.
     func beginUnlockCountdown() {
         guard lockMode == .timer, isManualLocked, unlockCountdown == nil else { return }
-        unlockCountdown = UnlockDelay.seconds
+        let end = Date().addingTimeInterval(TimeInterval(UnlockDelay.seconds))
+        defaults.set(end, forKey: Key.unlockCountdownEndsAt)
+        scheduleCountdownCompletionNotification(at: end)
+        runUnlockCountdown(until: end)
+    }
+
+    /// The wait is a wall-clock end date, not a count of foreground seconds.
+    /// The old loop slept one second per published tick, so backgrounding the
+    /// app paused the countdown — "unlocking takes 30 seconds" quietly became
+    /// "30 seconds of keeping the app open". The end date is persisted, so
+    /// the wait also survives suspension and relaunch: init resumes it, or
+    /// arrives already unlocked when the time has passed.
+    private func runUnlockCountdown(until end: Date) {
+        unlockCountdown = Self.remainingSeconds(until: end)
         unlockCountdownTask = Task { @MainActor [weak self] in
-            while let remaining = self?.unlockCountdown, remaining > 0 {
-                try? await Task.sleep(for: .seconds(1))
-                guard !Task.isCancelled, let self else { return }
-                guard let current = self.unlockCountdown else { return }
-                self.unlockCountdown = current - 1
+            while !Task.isCancelled {
+                guard let self else { return }
+                let remaining = Self.remainingSeconds(until: end)
+                if remaining <= 0 { break }
+                if self.unlockCountdown != remaining {
+                    self.unlockCountdown = remaining
+                }
+                try? await Task.sleep(for: .milliseconds(500))
             }
-            guard !Task.isCancelled, let self, self.unlockCountdown != nil else { return }
+            guard !Task.isCancelled, let self else { return }
             self.unlockCountdown = nil
             self.unlockCountdownTask = nil
+            self.defaults.removeObject(forKey: Key.unlockCountdownEndsAt)
+            // Completing in-process supersedes the scheduled fallback.
+            UNUserNotificationCenter.current()
+                .removePendingNotificationRequests(withIdentifiers: [Self.countdownNotificationID])
             self.releaseLock()
         }
+    }
+
+    private nonisolated static func remainingSeconds(until end: Date) -> Int {
+        max(0, Int(end.timeIntervalSinceNow.rounded(.up)))
+    }
+
+    /// Fires when the wait ends even if Broke is suspended by then — the
+    /// in-process completion only runs while the app does. Opening the app
+    /// from it finishes the unlock.
+    private func scheduleCountdownCompletionNotification(at end: Date) {
+        let content = UNMutableNotificationContent()
+        content.title = "Time's up"
+        content.body = "The 30 seconds have passed. Open Broke and your apps come back."
+        content.sound = .default
+        let trigger = UNTimeIntervalNotificationTrigger(
+            timeInterval: max(1, end.timeIntervalSinceNow),
+            repeats: false
+        )
+        UNUserNotificationCenter.current().add(UNNotificationRequest(
+            identifier: Self.countdownNotificationID,
+            content: content,
+            trigger: trigger
+        ))
     }
 
     func cancelUnlockCountdown(userInitiated: Bool = false) {
@@ -442,6 +548,9 @@ final class FocusLockModel: ObservableObject {
         unlockCountdownTask?.cancel()
         unlockCountdownTask = nil
         unlockCountdown = nil
+        defaults.removeObject(forKey: Key.unlockCountdownEndsAt)
+        UNUserNotificationCenter.current()
+            .removePendingNotificationRequests(withIdentifiers: [Self.countdownNotificationID])
         if userInitiated {
             popup = .stayedStrong
         }
@@ -645,6 +754,7 @@ final class FocusLockModel: ObservableObject {
         guard shouldLock != isLocked else { return }
         let previousLockState = isLocked
         isLocked = shouldLock
+        BackgroundJournal.record(shouldLock ? "lock engaged — shields on" : "lock released — shields off")
         updateLockTimer(for: shouldLock)
         sendLockNotification(isLocked: shouldLock)
         scheduleLockFeedback(from: previousLockState, to: shouldLock)

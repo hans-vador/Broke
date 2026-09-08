@@ -7,7 +7,7 @@ struct ContentView: View {
     @EnvironmentObject private var designSettings: DesignSettings
     @State private var isChoosingApps = false
     @State private var podRoomNames: [String: String] = [:]
-    @State private var calibrationPod: BLEProximityManager.PodSnapshot?
+    @State private var calibrationRequest: BoundaryCalibrationRequest?
     @State private var isNamingProfile = false
     @State private var newProfileName = ""
     @State private var isConfirmingEmergencyUnlock = false
@@ -34,6 +34,25 @@ struct ContentView: View {
     /// gives back the height the empty margin was eating.
     private var mascotSize: CGFloat {
         design.usesCompactStatusCard ? 138 : 150
+    }
+
+    /// Changing what is blocked is the one thing the lock has to prevent, so
+    /// every control that can do it is gated on this. The model refuses these
+    /// edits regardless; this is so the UI says why instead of going dead.
+    private var canEditLists: Bool { model.canEditBlockLists }
+
+    /// The app picker can only be open while unlocked. Locking with the sheet
+    /// already up closes it, so a lock that engages mid-edit still holds.
+    private var appPickerPresented: Binding<Bool> {
+        Binding(
+            get: { isChoosingApps && model.canEditBlockLists },
+            set: { isChoosingApps = $0 }
+        )
+    }
+
+    private var editListTitle: String {
+        guard canEditLists else { return "Locked — unlock to change apps" }
+        return model.hasSelection ? "Edit active list" : "Choose apps for this list"
     }
 
     /// Shared by the list cards and the "New list" card so the row lines up.
@@ -108,7 +127,7 @@ struct ContentView: View {
         .environment(\.designTokens, design)
         .preferredColorScheme(.light)
         .familyActivityPicker(
-            isPresented: $isChoosingApps,
+            isPresented: appPickerPresented,
             selection: $model.selection
         )
         .alert("New block list", isPresented: $isNamingProfile) {
@@ -147,11 +166,12 @@ struct ContentView: View {
             .presentationDragIndicator(.hidden)
             .presentationCornerRadius(34)
         }
-        .sheet(item: $calibrationPod) { pod in
+        .sheet(item: $calibrationRequest) { request in
             BoundaryCalibrationSheet(
-                pod: pod,
+                pod: request.pod,
                 proximity: proximity,
-                dismiss: { calibrationPod = nil }
+                dismiss: { calibrationRequest = nil },
+                showsIntro: request.showsIntro
             )
             .presentationDetents([.height(520)])
             .presentationDragIndicator(.hidden)
@@ -499,6 +519,7 @@ struct ContentView: View {
                         }
                     }
                     .buttonStyle(PressButtonStyle())
+                    .disabled(!canEditLists)
                 }
             }
             .contentMargins(.horizontal, 1, for: .scrollContent)
@@ -507,19 +528,22 @@ struct ContentView: View {
                 isChoosingApps = true
             } label: {
                 HStack {
-                    Image(systemName: "slider.horizontal.3")
-                    Text(model.hasSelection ? "Edit active list" : "Choose apps for this list")
+                    Image(systemName: canEditLists ? "slider.horizontal.3" : "lock.fill")
+                    Text(editListTitle)
                     Spacer()
-                    Text("\(model.selectedItemCount) selected")
-                    Image(systemName: "chevron.right")
+                    if canEditLists {
+                        Text("\(model.selectedItemCount) selected")
+                        Image(systemName: "chevron.right")
+                    }
                 }
                 .font(.system(size: design.type(12), weight: .black, design: .rounded))
-                .foregroundStyle(design.text.opacity(0.68))
+                .foregroundStyle(design.inkOnSurface(canEditLists ? 0.68 : 0.45))
                 .padding(.horizontal, design.spacing(16))
                 .frame(height: design.spacing(48))
                 .background(design.muted, in: RoundedRectangle(cornerRadius: design.radius(8)))
             }
             .buttonStyle(.plain)
+            .disabled(!canEditLists)
 
             if !model.hasScreenTimeAuthorization {
                 Button {
@@ -615,8 +639,9 @@ struct ContentView: View {
             }
         }
         .buttonStyle(PressButtonStyle())
+        .disabled(!canEditLists)
         .contextMenu {
-            if model.blockProfiles.count > 1 {
+            if canEditLists, model.blockProfiles.count > 1 {
                 Button("Delete list", role: .destructive) {
                     model.deleteBlockProfile(profile.id)
                 }
@@ -769,6 +794,18 @@ struct ContentView: View {
                             Button("Pair") {
                                 let room = podRoomNames[pod.podID, default: ""]
                                 proximity.pairPod(pod.podID, room: room)
+                                // Calibration is part of pairing, not a chore
+                                // to find later: a pod without a boundary
+                                // falls back to a generic threshold, which is
+                                // exactly the state that behaves confusingly.
+                                // pairPod publishes snapshots synchronously,
+                                // so the paired snapshot exists right here.
+                                if let paired = proximity.pairedPodSnapshots
+                                    .first(where: { $0.podID == pod.podID }) {
+                                    proximity.clearCalibrationResult()
+                                    calibrationRequest = BoundaryCalibrationRequest(
+                                        pod: paired, showsIntro: true)
+                                }
                             }
                             .font(.system(size: design.type(12), weight: .black, design: .rounded))
                             .foregroundStyle(design.secondary)
@@ -823,7 +860,8 @@ struct ContentView: View {
                 HStack(spacing: design.spacing(10)) {
                     Button(pod.boundaryRSSI == nil ? "Calibrate" : "Recalibrate") {
                         proximity.clearCalibrationResult()
-                        calibrationPod = pod
+                        calibrationRequest = BoundaryCalibrationRequest(
+                            pod: pod, showsIntro: false)
                     }
                     .foregroundStyle(design.text.opacity(0.58))
 
@@ -1172,11 +1210,29 @@ private struct AppearanceSettingsView: View {
     }
 }
 
-private struct BoundaryCalibrationSheet: View {
+/// How the calibration sheet was opened. Pairing shows the intro page first;
+/// recalibrating an existing pod goes straight to the flow.
+struct BoundaryCalibrationRequest: Identifiable {
+    let pod: BLEProximityManager.PodSnapshot
+    let showsIntro: Bool
+    var id: String { pod.podID }
+}
+
+struct BoundaryCalibrationSheet: View {
     let pod: BLEProximityManager.PodSnapshot
     @ObservedObject var proximity: BLEProximityManager
     let dismiss: () -> Void
+    /// When opened as the tail of pairing, start on a "Pod paired" page and
+    /// wait for an explicit button press before showing the calibration flow —
+    /// dropping someone into measuring UI mid-pair reads as it starting on
+    /// its own, even though sampling never begins until they ask.
+    var showsIntro = false
+    @State private var hasLeftIntro = false
     @Environment(\.designTokens) private var design
+
+    private var isShowingIntro: Bool {
+        showsIntro && !hasLeftIntro && session == nil && result == nil
+    }
 
     private var session: BLEProximityManager.CalibrationSession? {
         guard proximity.calibrationSession?.podID == pod.podID else { return nil }
@@ -1189,6 +1245,72 @@ private struct BoundaryCalibrationSheet: View {
     }
 
     var body: some View {
+        Group {
+            if isShowingIntro {
+                intro
+            } else {
+                calibration
+            }
+        }
+        .background(design.surface)
+        .onDisappear {
+            if session != nil {
+                proximity.cancelCalibration()
+            }
+            proximity.clearCalibrationResult()
+        }
+    }
+
+    /// The reading step between pairing and calibrating. Nothing measures
+    /// here; it says what happens next and waits.
+    private var intro: some View {
+        VStack(spacing: 0) {
+            ZStack {
+                Circle()
+                    .fill(design.primary.opacity(0.16))
+                    .frame(width: 108, height: 108)
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 38, weight: .bold))
+                    .foregroundStyle(design.primary)
+            }
+            .padding(.top, 34)
+
+            Text("Pod paired")
+                .font(.system(size: 26, weight: .black, design: .rounded))
+                .foregroundStyle(design.text)
+                .padding(.top, 20)
+
+            Text("\(pod.displayName) is set up. One more step: show Broke where this room ends.\n\nWalk to the edge of the room — the spot where your apps should switch between locked and unlocked — and hold your phone still for a few seconds while it measures.")
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .foregroundStyle(design.text.opacity(0.5))
+                .multilineTextAlignment(.center)
+                .lineSpacing(4)
+                .padding(.horizontal, 34)
+                .padding(.top, 8)
+
+            Spacer()
+
+            Button {
+                hasLeftIntro = true
+            } label: {
+                Text("Set the room boundary")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(PrimaryCTAStyle(tokens: design, isEnabled: true))
+            .padding(.horizontal, 22)
+
+            Button("Do it later") {
+                dismiss()
+            }
+            .font(.system(size: 12, weight: .black, design: .rounded))
+            .foregroundStyle(design.text.opacity(0.45))
+            .padding(.top, 16)
+
+            Spacer().frame(height: 20)
+        }
+    }
+
+    private var calibration: some View {
         VStack(spacing: 0) {
             ZStack {
                 Circle()
@@ -1263,13 +1385,6 @@ private struct BoundaryCalibrationSheet: View {
             }
 
             Spacer().frame(height: 20)
-        }
-        .background(design.surface)
-        .onDisappear {
-            if session != nil {
-                proximity.cancelCalibration()
-            }
-            proximity.clearCalibrationResult()
         }
     }
 

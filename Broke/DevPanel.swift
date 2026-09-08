@@ -32,6 +32,7 @@ struct DevPanel: View {
     @State private var isConfirmingReset = false
     @State private var didReset = false
     @State private var nfcBypass = FocusLockModel.isNFCTestBypassEnabled
+    @State private var journalGeneration = 0
 
     var body: some View {
         NavigationStack {
@@ -42,6 +43,7 @@ struct DevPanel: View {
                 hardwareSection
                 mascotSection
                 designSection
+                journalSection
                 resetSection
             }
             .navigationTitle("Dev Panel")
@@ -174,6 +176,36 @@ struct DevPanel: View {
         } footer: {
             Text("Close the panel to see the change — these repaint the home screen live.")
         }
+    }
+
+    /// What the app did while it was not on screen. "[bg]" lines are the
+    /// proof: they were written without the app being open. Empty after a
+    /// walk test means the radio never woke us — force-quit, or Bluetooth
+    /// denied — which is exactly the diagnosis this exists to make.
+    private var journalSection: some View {
+        Section {
+            let entries = BackgroundJournal.entries
+            if entries.isEmpty {
+                Text("No events yet. Pair a pod, background the app, and walk.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(Array(entries.prefix(30).enumerated()), id: \.offset) { _, line in
+                    Text(line)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(line.contains("[bg]") ? .primary : .secondary)
+                }
+            }
+            Button("Clear journal") {
+                BackgroundJournal.clear()
+                journalGeneration += 1
+            }
+        } header: {
+            Text("Background journal")
+        } footer: {
+            Text("Every radio wake, boundary crossing, and lock change, stamped with whether the app was on screen. [bg] lines happened without the app open.")
+        }
+        .id(journalGeneration)
     }
 
     private var isShowingShippedLook: Bool {

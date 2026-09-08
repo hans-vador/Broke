@@ -15,6 +15,9 @@ struct OnboardingView: View {
     @State private var chosenMode: LockMode? = OnboardingView.initialMode
     @State private var isChoosingApps = false
     @State private var isConfirmingMode = false
+    /// Set when a pod is paired on the hardware step; presents the same
+    /// calibration sheet the home screen uses, as the tail end of pairing.
+    @State private var calibrationRequest: BoundaryCalibrationRequest?
 
     /// DEBUG hook: launch with ONBOARD_STEP=<name> (and optionally
     /// ONBOARD_MODE=<tag|pod|timer>) to jump straight to one screen for QA.
@@ -93,6 +96,17 @@ struct OnboardingView: View {
         // confirmation, or the toggle you ticked for the previous choice
         // carries over and waves the new one straight through.
         .onChange(of: chosenMode) { _, _ in isConfirmingMode = false }
+        .sheet(item: $calibrationRequest) { request in
+            BoundaryCalibrationSheet(
+                pod: request.pod,
+                proximity: proximity,
+                dismiss: { calibrationRequest = nil },
+                showsIntro: request.showsIntro
+            )
+            .presentationDetents([.height(520)])
+            .presentationDragIndicator(.hidden)
+            .presentationCornerRadius(34)
+        }
         .familyActivityPicker(isPresented: $isChoosingApps, selection: $model.selection)
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: step)
     }
@@ -455,8 +469,18 @@ struct OnboardingView: View {
         } else if let found = proximity.discoveredUnpairedPods.first {
             setupCard(symbol: "sensor.tag.radiowaves.forward",
                       title: "Pair \(found.podID)",
-                      detail: "Found a Broke pod nearby. Tap to claim it.",
-                      done: false) { proximity.pairPod(found.podID, room: "My room") }
+                      detail: "Found a Broke pod nearby. Tap to pair and set its room boundary.",
+                      done: false) {
+                proximity.pairPod(found.podID, room: "My room")
+                // Same rule as the home screen: pairing flows straight into
+                // calibration rather than leaving it as a separate step.
+                if let paired = proximity.pairedPodSnapshots
+                    .first(where: { $0.podID == found.podID }) {
+                    proximity.clearCalibrationResult()
+                    calibrationRequest = BoundaryCalibrationRequest(
+                        pod: paired, showsIntro: true)
+                }
+            }
         } else {
             setupCard(symbol: "antenna.radiowaves.left.and.right",
                       title: "Looking for pods…",
